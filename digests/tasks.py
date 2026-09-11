@@ -146,7 +146,26 @@ def generate_user_digest_task(user_id, target_date=None):
     )
     digest.topics.set(topics)
 
+    # Déclencher la synthèse vocale si l'utilisateur souhaite de l'audio
+    if pref.format_preference in ["audio", "both"]:
+        generate_digest_audio_task.delay(digest.id)
+
     return f"Digest {digest_date} généré pour {user.username} avec {len(topics)} topics"
+
+
+@shared_task
+def generate_digest_audio_task(digest_id):
+    from .services.tts import generate_audio_for_digest
+    try:
+        digest = Digest.objects.get(id=digest_id)
+    except Digest.DoesNotExist:
+        return f"Digest {digest_id} introuvable"
+
+    try:
+        audio_url = generate_audio_for_digest(digest)
+        return f"Audio généré pour le digest {digest_id}: {audio_url}"
+    except Exception as e:
+        return f"Erreur génération audio digest {digest_id}: {e}"
 
 
 @shared_task

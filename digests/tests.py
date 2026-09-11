@@ -90,15 +90,31 @@ class ModelsTestCase(TestCase):
         from .ingestors.reddit import RedditIngestor
         from .ingestors.youtube import YouTubeIngestor
 
+        from .ingestors.twitter import TwitterIngestor
+        from .ingestors.instagram import InstagramIngestor
+
         # Test factory
         self.assertIsInstance(get_ingestor("rss"), RSSIngestor)
         self.assertIsInstance(get_ingestor("reddit"), RedditIngestor)
         self.assertIsInstance(get_ingestor("youtube"), YouTubeIngestor)
+        self.assertIsInstance(get_ingestor("twitter"), TwitterIngestor)
+        self.assertIsInstance(get_ingestor("instagram"), InstagramIngestor)
         self.assertIsInstance(get_ingestor("inconnu"), RSSIngestor)
 
         # Test HTML cleaner
         dirty_html = "<div><p>Texte <b>important</b></p><script>alert('hack')</script><style>body {color: red;}</style></div>"
         cleaned = clean_html_text(dirty_html)
         self.assertEqual(cleaned, "Texte important")
+
+    def test_tts_cleaner(self):
+        from .services.tts import clean_script_for_tts
+
+        raw = "# Titre\n\nVoici **un résumé** avec un lien https://google.com."
+        cleaned = clean_script_for_tts(raw)
+        self.assertNotIn("#", cleaned)
+        self.assertNotIn("*", cleaned)
+        self.assertNotIn("https://", cleaned)
+        self.assertIn("un résumé", cleaned)
+
 
 

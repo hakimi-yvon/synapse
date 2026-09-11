@@ -8,7 +8,14 @@ class Source(models.Model):
     url = models.URLField()
     source_type = models.CharField(
         max_length=20,
-        choices=[("rss", "RSS"), ("reddit", "Reddit"), ("youtube", "YouTube"), ("api", "API")],
+        choices=[
+            ("rss", "RSS"),
+            ("reddit", "Reddit"),
+            ("youtube", "YouTube"),
+            ("twitter", "Twitter/X"),
+            ("instagram", "Instagram"),
+            ("api", "API"),
+        ],
     )
     category = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)

@@ -1,4 +1,3 @@
-import feedparser
 from datetime import datetime, timezone
 from celery import shared_task
 from django.db import IntegrityError
@@ -6,6 +5,7 @@ from .models import Source, Article, Topic, Digest, UserPreference
 from .embeddings import generate_embedding
 from .clustering import cluster_article
 from .services.synthesizer import summarize_topic, generate_digest_script
+from .ingestors import get_ingestor
 
 
 @shared_task
@@ -15,30 +15,24 @@ def fetch_source(source_id):
     except Source.DoesNotExist:
         return f"Source {source_id} introuvable ou inactive"
 
-    feed = feedparser.parse(source.url)
+    ingestor = get_ingestor(source.source_type)
+    raw_articles = ingestor.fetch(source)
     created_count = 0
 
-    for entry in feed.entries:
-        url = entry.get("link")
-        if not url:
+    for raw in raw_articles:
+        if not raw.url:
             continue
 
-        if Article.objects.filter(url=url).exists():
+        if Article.objects.filter(url=raw.url).exists():
             continue
-
-        published = entry.get("published_parsed")
-        published_at = (
-            datetime(*published[:6], tzinfo=timezone.utc)
-            if published else datetime.now(timezone.utc)
-        )
 
         try:
             article = Article.objects.create(
                 source=source,
-                title=entry.get("title", "Sans titre"),
-                url=url,
-                raw_content=entry.get("summary", ""),
-                published_at=published_at,
+                title=raw.title,
+                url=raw.url,
+                raw_content=raw.raw_content,
+                published_at=raw.published_at,
             )
             created_count += 1
             embed_article.delay(article.id)
@@ -49,7 +43,7 @@ def fetch_source(source_id):
     source.last_fetched_at = datetime.now(timezone.utc)
     source.save(update_fields=["last_fetched_at"])
 
-    return f"{created_count} nouveaux articles depuis {source.name}"
+    return f"{created_count} nouveaux articles depuis {source.name} [{source.source_type}]"
 
 
 @shared_task

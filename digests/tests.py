@@ -84,3 +84,21 @@ class ModelsTestCase(TestCase):
         script = generate_digest_script([topic], format_preference="both")
         self.assertIn("Nouvelle annonce IA", script)
 
+    def test_ingestor_factory_and_html_cleaner(self):
+        from .ingestors import get_ingestor
+        from .ingestors.rss import RSSIngestor, clean_html_text
+        from .ingestors.reddit import RedditIngestor
+        from .ingestors.youtube import YouTubeIngestor
+
+        # Test factory
+        self.assertIsInstance(get_ingestor("rss"), RSSIngestor)
+        self.assertIsInstance(get_ingestor("reddit"), RedditIngestor)
+        self.assertIsInstance(get_ingestor("youtube"), YouTubeIngestor)
+        self.assertIsInstance(get_ingestor("inconnu"), RSSIngestor)
+
+        # Test HTML cleaner
+        dirty_html = "<div><p>Texte <b>important</b></p><script>alert('hack')</script><style>body {color: red;}</style></div>"
+        cleaned = clean_html_text(dirty_html)
+        self.assertEqual(cleaned, "Texte important")
+
+

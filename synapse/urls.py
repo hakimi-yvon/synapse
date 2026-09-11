@@ -19,8 +19,12 @@ from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
 
+from digests.views import telegram_webhook, whatsapp_webhook
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('webhook/telegram/', telegram_webhook, name='telegram_webhook'),
+    path('webhook/whatsapp/', whatsapp_webhook, name='whatsapp_webhook'),
 ]
 
 if settings.DEBUG:

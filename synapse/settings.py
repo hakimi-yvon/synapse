@@ -142,3 +142,14 @@ CELERY_TIMEZONE = env('CELERY_TIMEZONE', default='UTC')
 # Gemini AI Configuration
 GEMINI_API_KEY = env('GEMINI_API_KEY', default=None)
 GEMINI_MODEL = env('GEMINI_MODEL', default='gemini-2.5-flash')
+
+# Telegram Bot Configuration
+TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN', default=None)
+
+# WhatsApp Configuration (Twilio ou Meta Cloud API)
+WHATSAPP_PROVIDER = env('WHATSAPP_PROVIDER', default='twilio')  # 'twilio' ou 'meta'
+TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID', default=None)
+TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN', default=None)
+TWILIO_WHATSAPP_NUMBER = env('TWILIO_WHATSAPP_NUMBER', default='whatsapp:+14155238886')
+META_WHATSAPP_TOKEN = env('META_WHATSAPP_TOKEN', default=None)
+META_WHATSAPP_PHONE_NUMBER_ID = env('META_WHATSAPP_PHONE_NUMBER_ID', default=None)

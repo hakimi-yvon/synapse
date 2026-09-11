@@ -116,5 +116,50 @@ class ModelsTestCase(TestCase):
         self.assertNotIn("https://", cleaned)
         self.assertIn("un résumé", cleaned)
 
+    def test_telegram_bot_update_handling(self):
+        from .services.telegram_bot import handle_telegram_update
+
+        update_payload = {
+            "update_id": 99999,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 888777666, "type": "private"},
+                "from": {"id": 888777666, "username": "alex_tech", "first_name": "Alex"},
+                "text": "/start",
+            },
+        }
+
+        handle_telegram_update(update_payload)
+
+        # Vérifier que l'utilisateur et le canal ont été créés
+        from django.contrib.auth.models import User
+        user = User.objects.get(username="alex_tech")
+        self.assertEqual(user.first_name, "Alex")
+
+        channel = DeliveryChannel.objects.get(user=user, channel_type="telegram")
+        self.assertEqual(channel.identifier, "888777666")
+        self.assertTrue(channel.is_active)
+
+    def test_delivery_dispatcher_fallback(self):
+        from .services.delivery import dispatch_digest_to_channels
+
+        # Sans token configuré, le statut doit basculer en 'failed' avec message d'erreur clair
+        channel = DeliveryChannel.objects.create(
+            user=self.user,
+            channel_type="telegram",
+            identifier="12345",
+        )
+        digest = Digest.objects.create(
+            user=self.user,
+            date=date(2026, 9, 13),
+            script_text="Texte du digest test",
+        )
+
+        deliveries = dispatch_digest_to_channels(digest)
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].status, "failed")
+        self.assertIn("TELEGRAM_BOT_TOKEN", deliveries[0].error_message)
+
+
 
 

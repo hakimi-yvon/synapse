@@ -149,6 +149,9 @@ def generate_user_digest_task(user_id, target_date=None):
     # Déclencher la synthèse vocale si l'utilisateur souhaite de l'audio
     if pref.format_preference in ["audio", "both"]:
         generate_digest_audio_task.delay(digest.id)
+    else:
+        # Envoi direct si format texte uniquement
+        deliver_digest_task.delay(digest.id)
 
     return f"Digest {digest_date} généré pour {user.username} avec {len(topics)} topics"
 
@@ -163,9 +166,26 @@ def generate_digest_audio_task(digest_id):
 
     try:
         audio_url = generate_audio_for_digest(digest)
+        # Déclencher la diffusion maintenant que l'audio et le texte sont prêts
+        deliver_digest_task.delay(digest.id)
         return f"Audio généré pour le digest {digest_id}: {audio_url}"
     except Exception as e:
+        # En cas d'erreur sur l'audio, envoyer quand même le texte
+        deliver_digest_task.delay(digest.id)
         return f"Erreur génération audio digest {digest_id}: {e}"
+
+
+@shared_task
+def deliver_digest_task(digest_id):
+    from .services.delivery import dispatch_digest_to_channels
+    try:
+        digest = Digest.objects.get(id=digest_id)
+    except Digest.DoesNotExist:
+        return f"Digest {digest_id} introuvable"
+
+    deliveries = dispatch_digest_to_channels(digest)
+    sent_count = sum(1 for d in deliveries if d.status == "sent")
+    return f"Digest {digest_id} distribué à {sent_count}/{len(deliveries)} canaux"
 
 
 @shared_task

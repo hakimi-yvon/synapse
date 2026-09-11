@@ -64,3 +64,23 @@ class ModelsTestCase(TestCase):
         self.assertEqual(delivery.status, "pending")
         self.assertEqual(delivery.channel.channel_type, "telegram")
 
+    def test_synthesizer_fallback_and_script(self):
+        from .services.synthesizer import summarize_topic, generate_digest_script
+
+        topic = Topic.objects.create(title="Nouvelle annonce IA", category="Tech")
+        Article.objects.create(
+            source=self.source,
+            title="Lancement d'un nouveau modèle IA",
+            url="https://techcrunch.com/article-ai",
+            raw_content="Un nouveau modèle d'IA très puissant a été annoncé.",
+            published_at=datetime.now(timezone.utc),
+            topic=topic,
+        )
+
+        summary = summarize_topic(topic)
+        self.assertIn("summary_bullets", summary)
+        self.assertTrue(len(summary["summary_bullets"]) > 0)
+
+        script = generate_digest_script([topic], format_preference="both")
+        self.assertIn("Nouvelle annonce IA", script)
+

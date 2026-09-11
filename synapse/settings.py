@@ -135,3 +135,7 @@ CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = env('CELERY_TIMEZONE', default='UTC')
+
+# Gemini AI Configuration
+GEMINI_API_KEY = env('GEMINI_API_KEY', default=None)
+GEMINI_MODEL = env('GEMINI_MODEL', default='gemini-2.5-flash')

@@ -91,6 +91,7 @@ class UserPreference(models.Model):
     digest_hour = models.TimeField(default="07:00")
     timezone = models.CharField(max_length=50, default="Africa/Douala", help_text="Fuseau horaire (ex: Africa/Douala, Europe/Paris)")
     receive_breaking_alerts = models.BooleanField(default=True, help_text="Recevoir les alertes d'urgence en temps réel")
+    interest_vector = VectorField(dimensions=768, null=True, blank=True, help_text="Profil vectoriel d'intérêt utilisateur")
     conversation_state = models.CharField(max_length=50, default="", blank=True)
 
     def __str__(self):
@@ -137,3 +138,16 @@ class DigestDelivery(models.Model):
 
     def __str__(self):
         return f"Envoi {self.digest} via {self.channel.channel_type} [{self.status}]"
+
+
+class Feedback(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="feedbacks")
+    topic = models.ForeignKey(Topic, null=True, blank=True, on_delete=models.SET_NULL)
+    digest = models.ForeignKey(Digest, null=True, blank=True, on_delete=models.SET_NULL)
+    score = models.SmallIntegerField(choices=[(1, "Like"), (-1, "Dislike")])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        sign = "👍" if self.score > 0 else "👎"
+        target = f"Topic {self.topic_id}" if self.topic else f"Digest {self.digest_id}"
+        return f"Feedback {sign} de {self.user.username} sur {target}"

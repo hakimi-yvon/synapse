@@ -198,7 +198,16 @@ def generate_user_digest_task(user_id, target_date=None):
             keyword_query |= Q(title__icontains=kw)
         topics_qs = topics_qs.filter(keyword_query)
 
-    topics = list(topics_qs.order_by("-importance_score")[:7])
+    if pref.interest_vector:
+        from pgvector.django import CosineDistance
+        topics = list(
+            topics_qs.filter(centroid_embedding__isnull=False)
+            .annotate(dist_pref=CosineDistance("centroid_embedding", pref.interest_vector))
+            .order_by("dist_pref", "-importance_score")[:7]
+        )
+    else:
+        topics = list(topics_qs.order_by("-importance_score")[:7])
+
     if not topics:
         # Fallback : si aucun sujet dans les 24h, récupérer les plus récents disponibles en base
         fallback_qs = Topic.objects.filter(importance_score__gte=pref.min_importance_score)
@@ -206,7 +215,15 @@ def generate_user_digest_task(user_id, target_date=None):
             fallback_qs = fallback_qs.filter(category__in=pref.followed_categories)
         if pref.keywords:
             fallback_qs = fallback_qs.filter(keyword_query)
-        topics = list(fallback_qs.order_by("-created_at", "-importance_score")[:7])
+        if pref.interest_vector:
+            from pgvector.django import CosineDistance
+            topics = list(
+                fallback_qs.filter(centroid_embedding__isnull=False)
+                .annotate(dist_pref=CosineDistance("centroid_embedding", pref.interest_vector))
+                .order_by("dist_pref", "-created_at", "-importance_score")[:7]
+            )
+        else:
+            topics = list(fallback_qs.order_by("-created_at", "-importance_score")[:7])
 
     if not topics:
         from .services.telegram_bot import send_telegram_reply

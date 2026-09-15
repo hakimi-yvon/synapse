@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 import httpx
@@ -23,6 +24,15 @@ class TelegramDeliveryService(BaseDeliveryService):
         pref = getattr(digest.user, "preference", None)
         format_pref = pref.format_preference if pref else "both"
 
+        feedback_keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "👍 Pertinent", "callback_data": f"fb:dig:{digest.id}:1"},
+                    {"text": "👎 Pas pour moi", "callback_data": f"fb:dig:{digest.id}:-1"},
+                ]
+            ]
+        }
+
         try:
             with httpx.Client(timeout=30.0) as client:
                 # 1. Envoi de l'audio si présent et demandé
@@ -37,6 +47,7 @@ class TelegramDeliveryService(BaseDeliveryService):
                                 "performer": "Synapse Intelligence",
                                 "caption": f"🎙️ *Votre Briefing Synapse du {digest.date}*",
                                 "parse_mode": "Markdown",
+                                "reply_markup": json.dumps(feedback_keyboard),
                             }
                             audio_res = client.post(f"{self.api_url}/sendAudio", data=data, files=files)
                             if audio_res.status_code != 200:
@@ -44,16 +55,16 @@ class TelegramDeliveryService(BaseDeliveryService):
 
                 # 2. Envoi du texte structuré si demandé
                 if format_pref in ["text", "both"] and digest.script_text:
-                    # Telegram limite les messages à 4096 caractères
                     text = digest.script_text[:4000]
                     msg_data = {
                         "chat_id": chat_id,
                         "text": text,
                         "parse_mode": "Markdown",
                         "disable_web_page_preview": True,
+                        "reply_markup": feedback_keyboard,
                     }
                     res = client.post(f"{self.api_url}/sendMessage", json=msg_data)
-                    # Si le Markdown échoue (ex: syntaxe particulière non échappée), repli en texte brut
+                    # Si le Markdown échoue, repli en texte brut
                     if res.status_code != 200:
                         msg_data.pop("parse_mode")
                         res = client.post(f"{self.api_url}/sendMessage", json=msg_data)

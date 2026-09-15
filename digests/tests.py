@@ -462,6 +462,56 @@ class ModelsTestCase(TestCase):
         user.preference.refresh_from_db()
         self.assertTrue(user.preference.receive_breaking_alerts)
 
+    def test_process_user_feedback_and_vector_update(self):
+        from .services.recommendation import process_user_feedback
+
+        dummy_vec = [0.2] * 768
+        topic = Topic.objects.create(
+            title="Sujet Apprécié",
+            category="Tech",
+            centroid_embedding=dummy_vec,
+        )
+
+        success, msg = process_user_feedback(self.user, score=1, topic_id=topic.id)
+        self.assertTrue(success)
+        self.assertIn("Merci", msg)
+
+        self.user.preference.refresh_from_db()
+        self.assertIsNotNone(self.user.preference.interest_vector)
+        self.assertEqual(len(self.user.preference.interest_vector), 768)
+
+        # Dislike
+        success2, msg2 = process_user_feedback(self.user, score=-1, topic_id=topic.id)
+        self.assertTrue(success2)
+        self.assertIn("noté", msg2)
+
+    def test_telegram_feedback_callback_and_commands(self):
+        from .services.telegram_bot import handle_telegram_update
+
+        digest = Digest.objects.create(user=self.user, date=date(2026, 9, 14))
+
+        # Callback query 👍
+        handle_telegram_update({
+            "callback_query": {
+                "id": "cb_12345",
+                "from": {"id": 11223344, "username": self.user.username},
+                "data": f"fb:dig:{digest.id}:1",
+                "message": {"message_id": 99, "chat": {"id": 11223344}},
+            }
+        })
+
+        self.assertTrue(self.user.feedbacks.filter(digest=digest, score=1).exists())
+
+        # Commande /like
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 11223344},
+                "from": {"username": self.user.username},
+                "text": "/like",
+            }
+        })
+        self.assertEqual(self.user.feedbacks.count(), 2)
+
 
 
 

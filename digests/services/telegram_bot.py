@@ -38,6 +38,20 @@ def send_telegram_reply(chat_id: str, text: str, parse_mode: str = "Markdown") -
         return False
 
 
+def answer_callback_query(callback_query_id: str, text: str = "", show_alert: bool = False) -> bool:
+    token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    if not token or not callback_query_id:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+        with httpx.Client(timeout=10.0) as client:
+            client.post(url, json={"callback_query_id": callback_query_id, "text": text, "show_alert": show_alert})
+        return True
+    except Exception as e:
+        logger.error(f"Erreur answerCallbackQuery Telegram: {e}")
+        return False
+
+
 AVAILABLE_CATEGORIES = {
     "1": ("Tech", "💻 Tech & Innovations"),
     "2": ("IA", "🤖 Intelligence Artificielle"),
@@ -124,8 +138,38 @@ def send_multiple_categories_prompt(chat_id: str) -> None:
 
 def handle_telegram_update(update: dict) -> None:
     """
-    Traite un message reçu par le bot Telegram avec gestion d'état conversationnel.
+    Traite un message ou callback query reçu par le bot Telegram avec gestion d'état conversationnel.
     """
+    # 1. Gestion des clics sur les boutons inline (Feedback 👍 / 👎)
+    callback_query = update.get("callback_query")
+    if callback_query:
+        cb_id = str(callback_query.get("id"))
+        cb_from = callback_query.get("from", {})
+        cb_user_id = str(cb_from.get("id"))
+        cb_username = cb_from.get("username") or f"tg_{cb_user_id}"
+        cb_data = callback_query.get("data", "")
+
+        user, _ = User.objects.get_or_create(username=cb_username)
+
+        if cb_data.startswith("fb:"):
+            parts = cb_data.split(":")
+            if len(parts) == 4:
+                target_type = parts[1]
+                target_id = int(parts[2])
+                score = int(parts[3])
+
+                from digests.services.recommendation import process_user_feedback
+                digest_id = target_id if target_type == "dig" else None
+                topic_id = target_id if target_type == "top" else None
+
+                _, msg = process_user_feedback(user, score, digest_id=digest_id, topic_id=topic_id)
+                answer_callback_query(cb_id, text=msg[:190])
+
+                chat = callback_query.get("message", {}).get("chat", {})
+                chat_id = str(chat.get("id", cb_user_id))
+                send_telegram_reply(chat_id, f"🎯 *Feedback enregistré :*\n{msg}")
+                return
+
     message = update.get("message")
     if not message:
         return
@@ -505,11 +549,31 @@ def handle_telegram_update(update: dict) -> None:
         send_telegram_reply(chat_id, msg)
         return
 
-    # 14. Commande /status
+    # 14. Commande /like, /dislike ou /feedback
+    if text.startswith("/like") or text.startswith("/dislike") or text.startswith("/feedback"):
+        score = 1 if (text.startswith("/like") or "👍" in text) else (-1 if (text.startswith("/dislike") or "👎" in text) else 0)
+        if score != 0:
+            last_digest = user.digests.order_by("-date").first()
+            from digests.services.recommendation import process_user_feedback
+            _, msg = process_user_feedback(user, score, digest_id=last_digest.id if last_digest else None)
+            send_telegram_reply(chat_id, msg)
+            return
+        else:
+            send_telegram_reply(
+                chat_id,
+                "💬 *Votre avis affine vos briefings :*\n\n"
+                "• Tapez `/like` (ou 👍) si le dernier briefing correspondait à vos attentes.\n"
+                "• Tapez `/dislike` (ou 👎) si vous souhaitez moins d'articles de ce style.\n"
+                "• Vous pouvez aussi cliquer directement sur les boutons sous chaque briefing !"
+            )
+            return
+
+    # 15. Commande /status
     if text.startswith("/status"):
         cats = [label for _, (code, label) in AVAILABLE_CATEGORIES.items() if code in pref.followed_categories]
         cats_str = ", ".join(cats) if cats else ("Tous les domaines" if not pref.keywords else "Aucune catégorie standard")
         kws_str = ", ".join(pref.keywords) if pref.keywords else "Aucun"
+        has_learned = "Personnalisé ✨" if pref.interest_vector else "Standard (en attente de feedback)"
         try:
             cur_local = datetime.now(ZoneInfo(pref.timezone or "Africa/Douala")).strftime("%H:%M")
         except Exception:
@@ -518,6 +582,7 @@ def handle_telegram_update(update: dict) -> None:
         reply = (
             f"⚙️ *Votre Configuration Synapse*\n\n"
             f"• Utilisateur : `{user.username}`\n"
+            f"• Profil d'apprentissage : *{has_learned}*\n"
             f"• Format : *{pref.format_preference}*\n"
             f"• Domaines suivis : *{cats_str}*\n"
             f"• Mots-clés : *{kws_str}*\n"
@@ -526,6 +591,7 @@ def handle_telegram_update(update: dict) -> None:
             f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n"
             f"• 🚨 Flashs Breaking News : *{'Activés 🔔' if pref.receive_breaking_alerts else 'Désactivés 🔕'}*\n\n"
             "💡 *Commandes disponibles :*\n"
+            "• `/like` / `/dislike` : Noter le dernier briefing (apprentissage vectoriel)\n"
             "• `/ask [question]` : Poser une question sur l'actualité (Chat with your News)\n"
             "• `/alertes [on|off]` : Activer/désactiver les alertes d'urgence\n"
             "• `/digest` : Recevoir votre briefing maintenant\n"

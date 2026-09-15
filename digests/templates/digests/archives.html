@@ -1,0 +1,69 @@
+{% extends "digests/base.html" %}
+
+{% block title %}Archives des Briefings Audio — Synapse{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="flex items-center justify-between pb-4 border-b border-gray-800">
+        <div>
+            <h1 class="text-2xl sm:text-3xl font-black text-white flex items-center gap-3">
+                <span>Archives des Briefings</span>
+                <span class="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-mono">Audio & Texte</span>
+            </h1>
+            <p class="text-sm text-gray-400 mt-1">Retrouvez l'historique complet des synthèses d'actualités générées jour par jour.</p>
+        </div>
+        <a href="{% url 'dashboard' %}" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold">
+            <i class="fa-solid fa-arrow-left"></i>
+            <span>Retour au Dashboard</span>
+        </a>
+    </div>
+
+    <!-- Grille des Archives -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for d in digests %}
+        <div class="glass rounded-2xl p-6 border border-gray-800 space-y-4 hover:border-gray-700 transition flex flex-col justify-between">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="font-mono text-emerald-400 font-bold flex items-center gap-1.5">
+                        <i class="fa-solid fa-calendar-day"></i>
+                        <span>{{ d.date|date:"l d F Y" }}</span>
+                    </span>
+                    {% if d.audio_url %}
+                    <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-semibold flex items-center gap-1">
+                        <i class="fa-solid fa-headphones"></i>
+                        <span>MP3</span>
+                    </span>
+                    {% endif %}
+                </div>
+
+                <p class="text-xs text-gray-400 line-clamp-3 leading-relaxed">
+                    {{ d.script_text|truncatewords:30|default:"Briefing d'actualité préparé par Synapse." }}
+                </p>
+
+                <!-- Audio Player direct dans la carte si dispo -->
+                {% if d.audio_url %}
+                <div class="pt-2">
+                    <audio controls class="w-full h-8 rounded">
+                        <source src="{{ d.audio_url }}" type="audio/mpeg">
+                    </audio>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="pt-4 border-t border-gray-800/80 flex items-center justify-between text-xs">
+                <span class="text-gray-500">{{ d.topics.count }} sujet{{ d.topics.count|pluralize }}</span>
+                <a href="{% url 'digest_detail' d.id %}" class="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1">
+                    <span>Explorer le briefing</span>
+                    <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                </a>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-span-full py-16 text-center text-gray-500 glass rounded-2xl border border-gray-800">
+            <i class="fa-solid fa-box-open text-4xl text-gray-600 mb-3 block"></i>
+            <p class="text-sm">Aucun briefing archivé pour le moment.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

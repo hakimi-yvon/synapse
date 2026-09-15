@@ -512,6 +512,49 @@ class ModelsTestCase(TestCase):
         })
         self.assertEqual(self.user.feedbacks.count(), 2)
 
+    def test_dashboard_and_archive_views(self):
+        from django.test import RequestFactory
+        from digests.views import dashboard, archive_list, digest_detail, trigger_generation_view
+        from unittest.mock import patch
+
+        factory = RequestFactory()
+        digest = Digest.objects.create(
+            user=self.user,
+            date=date(2026, 9, 15),
+            script_text="Revue de presse générale du jour.",
+            audio_url="/media/audio/digests/digest_test.mp3",
+        )
+
+        # 1. Dashboard view
+        req = factory.get("/")
+        res = dashboard(req)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"Tableau de Bord Synapse", res.content)
+
+        # 2. Archive list view
+        req2 = factory.get("/archives/")
+        res2 = archive_list(req2)
+        self.assertEqual(res2.status_code, 200)
+        self.assertIn(b"Archives des Briefings", res2.content)
+
+        # 3. Digest detail view
+        req3 = factory.get(f"/digest/{digest.id}/")
+        res3 = digest_detail(req3, digest_id=digest.id)
+        self.assertEqual(res3.status_code, 200)
+        self.assertIn(b"Revue de presse", res3.content)
+
+        # 4. Trigger generation view
+        with patch("digests.views.fetch_all_sources.delay") as mock_fetch, \
+             patch("digests.views.dispatch_daily_digests.delay") as mock_dispatch:
+            req4 = factory.post("/generate/")
+            from django.contrib.messages.storage.fallback import FallbackStorage
+            setattr(req4, "session", {})
+            setattr(req4, "_messages", FallbackStorage(req4))
+            res4 = trigger_generation_view(req4)
+            self.assertEqual(res4.status_code, 302)
+            mock_fetch.assert_called_once()
+            mock_dispatch.assert_called_once()
+
 
 
 

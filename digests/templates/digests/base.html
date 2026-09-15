@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Synapse — Intelligence d'Actualités Multi-Sources{% endblock %}</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        synapse: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            800: '#166534',
+                            900: '#14532d',
+                            accent: '#6366f1',
+                            dark: '#0a0f1d',
+                            card: '#111827',
+                            border: '#1f2937'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #080c16;
+            color: #f3f4f6;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        .glass {
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-accent {
+            box-shadow: 0 0 25px rgba(99, 102, 241, 0.25);
+        }
+        .pulse-live {
+            animation: pulse-glow 2s infinite;
+        }
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased">
+    <!-- Navigation Header -->
+    <header class="sticky top-0 z-50 glass border-b border-gray-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <a href="{% url 'dashboard' %}" class="flex items-center space-x-3 group">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-synapse-500 to-emerald-400 flex items-center justify-center shadow-lg group-hover:scale-105 transition duration-200">
+                        <i class="fa-solid fa-brain text-white text-lg"></i>
+                    </div>
+                    <div>
+                        <span class="text-xl font-black tracking-wider bg-gradient-to-r from-white via-gray-200 to-indigo-300 bg-clip-text text-transparent">SYNAPSE</span>
+                        <span class="text-xs text-synapse-400 font-medium block leading-none">News Intelligence</span>
+                    </div>
+                </a>
+            </div>
+
+            <nav class="hidden md:flex items-center space-x-8 text-sm font-medium">
+                <a href="{% url 'dashboard' %}" class="text-gray-300 hover:text-white transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-chart-pie text-indigo-400"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="{% url 'archives' %}" class="text-gray-400 hover:text-white transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-box-archive text-emerald-400"></i>
+                    <span>Archives Audio</span>
+                </a>
+                <a href="https://t.me/SysnapseHakimi_bot" target="_blank" class="text-gray-400 hover:text-white transition flex items-center space-x-1.5">
+                    <i class="fa-brands fa-telegram text-sky-400"></i>
+                    <span>Bot Telegram</span>
+                </a>
+                <a href="/admin/" class="text-gray-400 hover:text-white transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-sliders text-amber-400"></i>
+                    <span>Admin</span>
+                </a>
+            </nav>
+
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2 bg-gray-900/90 border border-gray-800 px-3 py-1.5 rounded-full text-xs">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 pulse-live"></span>
+                    <span class="text-gray-300 font-mono">IA Active</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Messages Flash -->
+    {% if messages %}
+    <div class="max-w-7xl mx-auto px-4 mt-4 w-full">
+        {% for message in messages %}
+        <div class="p-4 rounded-xl border {% if message.tags == 'error' %}bg-red-950/80 border-red-800 text-red-200{% else %}bg-emerald-950/80 border-emerald-800 text-emerald-200{% endif %} flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-circle-check"></i>
+                <span>{{ message }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Main Content -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-800/80 py-8 bg-gray-950/50 mt-16 text-center text-xs text-gray-500">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div>
+                <span class="font-bold text-gray-300">Synapse Intelligence Engine</span> — Veille algorithmique & synthèse vocale par Gemini & Edge-TTS.
+            </div>
+            <div class="flex items-center space-x-6 text-gray-400">
+                <span><i class="fa-solid fa-database text-indigo-400 mr-1"></i> pgvector</span>
+                <span><i class="fa-solid fa-bolt text-amber-400 mr-1"></i> Celery Beat</span>
+                <span><i class="fa-brands fa-telegram text-sky-400 mr-1"></i> Telegram Live</span>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

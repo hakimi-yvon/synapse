@@ -1,0 +1,93 @@
+{% extends "digests/base.html" %}
+
+{% block title %}Briefing du {{ digest.date|date:"d F Y" }} — Synapse{% endblock %}
+
+{% block content %}
+<div class="space-y-8 max-w-5xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-800">
+        <div>
+            <div class="flex items-center gap-2 text-xs font-mono text-emerald-400 font-semibold mb-1">
+                <i class="fa-solid fa-calendar-check"></i>
+                <span>{{ digest.date|date:"l d F Y" }}</span>
+                <span>&bull;</span>
+                <span class="text-gray-400">Pour {{ digest.user.username }}</span>
+            </div>
+            <h1 class="text-2xl sm:text-3xl font-black text-white">Briefing Quotidien des Actualités</h1>
+        </div>
+        <a href="{% url 'archives' %}" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 font-semibold">
+            <i class="fa-solid fa-arrow-left"></i>
+            <span>Toutes les archives</span>
+        </a>
+    </div>
+
+    <!-- Lecteur Audio Hero -->
+    {% if digest.audio_url %}
+    <div class="glass rounded-2xl p-6 border border-indigo-500/20 glow-accent flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex items-center space-x-4">
+            <div class="w-12 h-12 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xl shadow-inner">
+                <i class="fa-solid fa-podcast"></i>
+            </div>
+            <div>
+                <h3 class="text-base font-bold text-white">Écouter le podcast radio</h3>
+                <p class="text-xs text-gray-400">Généré par la voix neuronale fr-FR-HenriNeural</p>
+            </div>
+        </div>
+        <div class="w-full sm:w-80">
+            <audio controls class="w-full h-10 rounded-lg">
+                <source src="{{ digest.audio_url }}" type="audio/mpeg">
+                Navigateur incompatible audio.
+            </audio>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Script Textuel Editorial -->
+    <div class="glass rounded-2xl p-6 sm:p-8 border border-gray-800 space-y-4">
+        <h3 class="text-base font-bold text-white flex items-center gap-2 pb-3 border-b border-gray-800">
+            <i class="fa-solid fa-file-lines text-indigo-400"></i>
+            <span>Texte Intégral du Briefing</span>
+        </h3>
+        <div class="prose prose-invert max-w-none text-gray-300 text-sm leading-relaxed whitespace-pre-line">
+            {{ digest.script_text }}
+        </div>
+    </div>
+
+    <!-- Sujets Traités -->
+    <div class="glass rounded-2xl p-6 sm:p-8 border border-gray-800 space-y-6">
+        <h3 class="text-base font-bold text-white flex items-center gap-2 pb-3 border-b border-gray-800">
+            <i class="fa-solid fa-layer-group text-emerald-400"></i>
+            <span>Sujets & Dépêches Associées ({{ digest.topics.count }})</span>
+        </h3>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {% for topic in digest.topics.all %}
+            <div class="p-5 rounded-xl bg-gray-900/60 border border-gray-800 space-y-3">
+                <div class="flex items-start justify-between gap-3">
+                    <h4 class="text-sm font-bold text-white leading-snug">{{ topic.title }}</h4>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold font-mono {% if topic.importance_score >= 8 %}bg-rose-950 text-rose-300 border border-rose-800{% else %}bg-indigo-950 text-indigo-300 border border-indigo-800{% endif %}">
+                        {{ topic.importance_score }}/10
+                    </span>
+                </div>
+
+                {% if topic.summary_bullets %}
+                <ul class="text-xs text-gray-400 space-y-1 list-disc list-inside">
+                    {% for b in topic.summary_bullets %}
+                    <li>{{ b }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+
+                <div class="pt-3 border-t border-gray-800/80 flex items-center justify-between text-xs">
+                    <span class="text-emerald-400 font-medium text-[11px]">{{ topic.category }}</span>
+                    <a href="https://t.me/SysnapseHakimi_bot?start=ask_{{ topic.id }}" target="_blank" class="text-sky-400 hover:text-sky-300 font-medium flex items-center gap-1 text-[11px]">
+                        <i class="fa-solid fa-comment-dots"></i>
+                        <span>Poser une question</span>
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

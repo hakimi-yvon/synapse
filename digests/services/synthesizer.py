@@ -97,8 +97,8 @@ def summarize_topic(topic: Topic) -> dict:
 def generate_digest_script(topics: list[Topic], format_preference: str = "both") -> str:
     """
     Génère le script complet du briefing quotidien pour un ensemble de topics.
-    Si le format est audio ou les deux, produit un script parlé fluide style chronique radio.
-    Si le format est texte, produit un markdown élégant.
+    Si le format est audio ou les deux, produit un script radio à deux voix (Duo Henri & Denise).
+    Si le format est texte, produit un markdown élégant pour Telegram/Mobile.
     """
     if not topics:
         return "Aucune actualité majeure ne correspond à vos filtres aujourd'hui."
@@ -116,15 +116,20 @@ def generate_digest_script(topics: list[Topic], format_preference: str = "both")
             model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
             if format_preference in ["audio", "both"]:
                 prompt = (
-                    "Tu es le présentateur du podcast quotidien 'Synapse', un briefing d'actualité matinal intelligent, percutant et dynamique.\n"
-                    "Voici les sujets d'actualité sélectionnés pour l'auditeur aujourd'hui :\n\n"
+                    "Tu es le réalisateur et scénariste du podcast matinal d'actualité 'Synapse Radio'.\n"
+                    "L'émission est co-animée par un duo d'experts journalistes très complices :\n"
+                    "- [HENRI] : Le présentateur principal (voix masculine chaleureuse, posée, qui cadre les grands enjeux).\n"
+                    "- [DENISE] : La co-présentatrice (voix féminine énergique, précise, apportant chiffres et analyses concrètes).\n\n"
+                    "Voici la sélection des sujets du jour à couvrir :\n\n"
                     f"{topics_summary_str}\n\n"
-                    "Rédige le script audio complet à lire à voix haute (environ 2 à 3 minutes de lecture).\n"
-                    "Consignes :\n"
-                    "- Commence par une accroche chaleureuse ('Bonjour et bienvenue dans votre briefing Synapse...').\n"
-                    "- Fais des transitions naturelles et fluides entre chaque sujet.\n"
-                    "- Pas de puces visuelles (pas de tirets, de puces ou de symboles Markdown) car ce texte sera directement lu par une voix de synthèse (TTS).\n"
-                    "- Termine par un mot d'au revoir inspirant pour démarrer la journée."
+                    "Rédige le script audio complet de l'émission matinale sous forme de dialogue alterné fluide et dynamique (environ 2 à 3 minutes).\n"
+                    "Consignes impératives :\n"
+                    "1. Chaque intervention DOIT débuter par l'identifiant exact de l'animateur en début de ligne : '[HENRI]: ' ou '[DENISE]: '.\n"
+                    "2. Ouverture conviviale et rythmée ('Bonjour à tous, bienvenue dans Synapse Matin ! À mes côtés, Denise...').\n"
+                    "3. Les animateurs dialoguent véritablement, rebondissent avec naturel l'un sur l'autre ('Absolument Henri...', 'Ce qui est frappant dans ce dossier...').\n"
+                    "4. Chaque réplique fait entre 2 et 4 phrases percutantes.\n"
+                    "5. AUCUN symbole Markdown, astérisque, tiret de liste ou indication scénique entre parenthèses ou crochets (comme [Rires] ou [Musique]), car le texte est directement converti en voix neuronale.\n"
+                    "6. Clôture chaleureuse et inspirante à deux voix."
                 )
             else:
                 prompt = (
@@ -147,6 +152,22 @@ def generate_digest_script(topics: list[Topic], format_preference: str = "both")
 
         except Exception as e:
             logger.error(f"Erreur lors de la génération du digest script via Gemini: {e}")
+
+    # Fallback pour le format audio/both : dialogue Duo synthétique
+    if format_preference in ["audio", "both"]:
+        lines = [
+            "[HENRI]: Bonjour et bienvenue dans votre briefing matinal Synapse. Denise, l'actualité est particulièrement dense aujourd'hui.",
+            "[DENISE]: Bonjour Henri, bonjour à tous ! Tout à fait, on fait le tour des dossiers essentiels tout de suite."
+        ]
+        for i, t in enumerate(topics):
+            bullets_text = " ".join(t.summary_bullets) if t.summary_bullets else "Des développements sont attendus."
+            if i % 2 == 0:
+                lines.append(f"[HENRI]: Concernant {t.title}. {bullets_text}")
+            else:
+                lines.append(f"[DENISE]: Sur le front de {t.title}. {bullets_text}")
+        lines.append("[HENRI]: Voilà pour les informations clés de ce matin. Très bonne journée à tous à l'écoute de Synapse !")
+        lines.append("[DENISE]: Excellente journée et à demain pour un nouveau tour d'horizon !")
+        return "\n\n".join(lines)
 
     # Fallback textuel formaté
     lines = ["# 🎙️ Votre Briefing Synapse\n"]

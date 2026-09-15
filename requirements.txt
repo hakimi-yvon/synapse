@@ -67,6 +67,7 @@ nvidia-nvshmem-cu13==3.4.5
 nvidia-nvtx==13.0.85
 packaging==26.3
 pgvector==0.5.0
+pillow==12.3.0
 prompt_toolkit==3.0.53
 propcache==0.5.2
 psycopg2-binary==2.9.12
@@ -75,6 +76,7 @@ pyasn1_modules==0.4.2
 pycparser==3.0
 pydantic==2.13.5
 pydantic_core==2.46.5
+pydub==0.25.1
 Pygments==2.21.0
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3

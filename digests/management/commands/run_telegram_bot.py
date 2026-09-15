@@ -8,11 +8,25 @@ from digests.services.telegram_bot import handle_telegram_update
 class Command(BaseCommand):
     help = "Lance le bot Telegram en mode long polling (idéal pour le développement local)"
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--sync",
+            action="store_true",
+            help="Exécute les tâches de fond en direct de façon synchrone (aucun worker Celery séparé nécessaire)",
+        )
+
     def handle(self, *args, **options):
         token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
         if not token:
             self.stderr.write(self.style.ERROR("Erreur : TELEGRAM_BOT_TOKEN n'est pas configuré dans .env ou settings."))
             return
+
+        if options.get("sync"):
+            settings.CELERY_TASK_ALWAYS_EAGER = True
+            settings.CELERY_TASK_EAGER_PROPAGATES = True
+            self.stdout.write(
+                self.style.WARNING("⚡ Mode Synchrone actif (--sync) : les tâches s'exécutent en direct sans worker Celery.")
+            )
 
         self.stdout.write(self.style.SUCCESS("🚀 Bot Telegram Synapse démarré en écoute (Polling)... Appuyez sur Ctrl+C pour arrêter."))
 

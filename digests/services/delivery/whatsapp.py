@@ -94,3 +94,45 @@ class WhatsAppDeliveryService(BaseDeliveryService):
             err_msg = f"Exception envoi Meta WhatsApp: {str(e)}"
             logger.error(err_msg)
             return False, err_msg
+
+
+def send_whatsapp_message(recipient: str, text: str) -> bool:
+    """
+    Envoie un message texte simple sur WhatsApp (utilisé pour les alertes Breaking News).
+    """
+    provider = getattr(settings, "WHATSAPP_PROVIDER", "twilio").lower()
+
+    if provider == "meta":
+        token = getattr(settings, "META_WHATSAPP_TOKEN", None)
+        phone_id = getattr(settings, "META_WHATSAPP_PHONE_NUMBER_ID", None)
+        if not token or not phone_id:
+            return False
+        clean_recipient = "".join(filter(str.isdigit, recipient))
+        url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                res = client.post(
+                    url,
+                    headers=headers,
+                    json={"messaging_product": "whatsapp", "to": clean_recipient, "type": "text", "text": {"body": text}},
+                )
+                return res.status_code in [200, 201]
+        except Exception as e:
+            logger.error(f"Erreur send_whatsapp_message Meta: {e}")
+            return False
+    else:
+        account_sid = getattr(settings, "TWILIO_ACCOUNT_SID", None)
+        auth_token = getattr(settings, "TWILIO_AUTH_TOKEN", None)
+        from_number = getattr(settings, "TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
+        if not account_sid or not auth_token:
+            return False
+        to_number = recipient if recipient.startswith("whatsapp:") else f"whatsapp:{recipient}"
+        try:
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+            with httpx.Client(timeout=15.0) as client:
+                res = client.post(url, data={"From": from_number, "To": to_number, "Body": text}, auth=(account_sid, auth_token))
+                return res.status_code in [200, 201]
+        except Exception as e:
+            logger.error(f"Erreur send_whatsapp_message Twilio: {e}")
+            return False

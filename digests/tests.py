@@ -405,6 +405,63 @@ class ModelsTestCase(TestCase):
             })
             mock_delay.assert_called_once()
 
+    def test_dispatch_breaking_news_alert_task(self):
+        from unittest.mock import patch
+        from .tasks import dispatch_breaking_news_alert_task
+
+        topic = Topic.objects.create(
+            title="Alerte Séisme Majeur et Tsunami",
+            summary_bullets=["Magnitude 8.2 enregistrée", "Alerte côtière déclenchée", "Évacuations en cours"],
+            category="Général",
+            importance_score=10,
+            is_breaking_news=True,
+        )
+
+        channel = DeliveryChannel.objects.create(
+            user=self.user,
+            channel_type="telegram",
+            identifier="999888",
+        )
+        self.user.preference.receive_breaking_alerts = True
+        self.user.preference.save()
+
+        with patch("digests.services.telegram_bot.send_telegram_reply", return_value=True) as mock_send:
+            res = dispatch_breaking_news_alert_task(topic.id)
+            self.assertIn("1 canaux notifiés", res)
+            mock_send.assert_called_once()
+
+            topic.refresh_from_db()
+            self.assertIsNotNone(topic.alert_sent_at)
+
+            # Deuxième appel -> idempotent, pas de renvoi
+            res2 = dispatch_breaking_news_alert_task(topic.id)
+            self.assertIn("Alerte déjà envoyée", res2)
+
+    def test_telegram_alertes_command(self):
+        from .services.telegram_bot import handle_telegram_update
+
+        # Désactiver
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 554433},
+                "from": {"username": "alert_tester", "first_name": "AlertTester"},
+                "text": "/alertes off",
+            }
+        })
+        user = User.objects.get(username="alert_tester")
+        self.assertFalse(user.preference.receive_breaking_alerts)
+
+        # Réactiver
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 554433},
+                "from": {"username": "alert_tester"},
+                "text": "/alertes on",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertTrue(user.preference.receive_breaking_alerts)
+
 
 
 

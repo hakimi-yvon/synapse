@@ -473,7 +473,39 @@ def handle_telegram_update(update: dict) -> None:
             send_telegram_reply(chat_id, "Usage : `/format audio`, `/format text`, ou `/format both`")
         return
 
-    # 13. Commande /status
+    # 13. Commande /alertes ou /alerts (Breaking News)
+    if text.startswith("/alertes") or text.startswith("/alerts"):
+        parts = text.split()
+        if len(parts) > 1:
+            sub = parts[1].lower()
+            if sub in ["on", "oui", "true", "active", "activer"]:
+                pref.receive_breaking_alerts = True
+                pref.save(update_fields=["receive_breaking_alerts"])
+                send_telegram_reply(
+                    chat_id,
+                    "🚨 *Alertes Breaking News activées !*\nVous recevrez en temps réel les actualités critiques majeures."
+                )
+                return
+            elif sub in ["off", "non", "false", "desactive", "désactiver", "stop"]:
+                pref.receive_breaking_alerts = False
+                pref.save(update_fields=["receive_breaking_alerts"])
+                send_telegram_reply(
+                    chat_id,
+                    "🔕 *Alertes Breaking News désactivées.*\nVous recevrez uniquement votre briefing matinal."
+                )
+                return
+        # Pas d'argument ou argument d'aide
+        state_str = "Activées 🔔" if pref.receive_breaking_alerts else "Désactivées 🔕"
+        msg = (
+            f"🚨 *Statut des alertes Breaking News :* {state_str}\n\n"
+            "Pour modifier votre réglage :\n"
+            "• `/alertes on` : Activer les alertes urgentes immédiates\n"
+            "• `/alertes off` : Désactiver les alertes urgentes"
+        )
+        send_telegram_reply(chat_id, msg)
+        return
+
+    # 14. Commande /status
     if text.startswith("/status"):
         cats = [label for _, (code, label) in AVAILABLE_CATEGORIES.items() if code in pref.followed_categories]
         cats_str = ", ".join(cats) if cats else ("Tous les domaines" if not pref.keywords else "Aucune catégorie standard")
@@ -491,9 +523,11 @@ def handle_telegram_update(update: dict) -> None:
             f"• Mots-clés : *{kws_str}*\n"
             f"• Score d'importance min : *{pref.min_importance_score}/10*\n"
             f"• ⏰ Réveil automatique : *{pref.digest_hour.strftime('%H:%M')}*\n"
-            f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n\n"
+            f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n"
+            f"• 🚨 Flashs Breaking News : *{'Activés 🔔' if pref.receive_breaking_alerts else 'Désactivés 🔕'}*\n\n"
             "💡 *Commandes disponibles :*\n"
             "• `/ask [question]` : Poser une question sur l'actualité (Chat with your News)\n"
+            "• `/alertes [on|off]` : Activer/désactiver les alertes d'urgence\n"
             "• `/digest` : Recevoir votre briefing maintenant\n"
             "• `/heure` : Modifier l'heure de livraison matinale\n"
             "• `/fuseau` : Changer de fuseau horaire\n"

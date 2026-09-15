@@ -95,7 +95,72 @@ def summarize_topic_task(topic_id):
         return f"Topic {topic_id} introuvable"
 
     result = summarize_topic(topic)
+    topic.refresh_from_db()
+
+    # Détection automatique et diffusion immédiate d'une alerte Breaking News
+    if (topic.is_breaking_news or topic.importance_score >= 9) and not topic.alert_sent_at:
+        dispatch_breaking_news_alert_task.delay(topic.id)
+
     return f"Topic {topic_id} résumé: {result.get('title')[:40]}"
+
+
+@shared_task
+def dispatch_breaking_news_alert_task(topic_id):
+    """
+    Diffuse une alerte Breaking News en temps réel aux utilisateurs éligibles
+    ayant activé les alertes et suivant la catégorie concernée.
+    """
+    import logging
+    from django.utils import timezone
+    from .models import Topic, UserPreference
+    from .services.telegram_bot import send_telegram_reply
+    from .services.delivery.whatsapp import send_whatsapp_message
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        topic = Topic.objects.get(id=topic_id)
+    except Topic.DoesNotExist:
+        return f"Topic {topic_id} introuvable"
+
+    if topic.alert_sent_at is not None:
+        return f"Alerte déjà envoyée pour le topic {topic_id}"
+
+    # Verrouillage pour éviter les doublons d'envoi
+    topic.alert_sent_at = timezone.now()
+    topic.save(update_fields=["alert_sent_at"])
+
+    bullets = "\n".join(f"• {b}" for b in topic.summary_bullets[:3]) if topic.summary_bullets else ""
+    alert_text = (
+        "🚨 *ALERTE BREAKING NEWS* 🚨\n\n"
+        f"🔥 *{topic.title}*\n"
+        f"🏷️ Thématique : *{topic.category or 'Actualité'}*\n\n"
+        f"{bullets}\n\n"
+        f"⚡ Indice d'importance : *{topic.importance_score}/10*\n\n"
+        f"💬 _Approfondir ce sujet avec l'analyste :_\n`/ask {topic.title[:50]}`"
+    )
+
+    eligible_prefs = UserPreference.objects.filter(
+        receive_breaking_alerts=True,
+        min_importance_score__lte=topic.importance_score,
+    ).select_related("user")
+
+    sent_count = 0
+    for pref in eligible_prefs:
+        if pref.followed_categories and topic.category not in pref.followed_categories:
+            continue
+
+        channels = pref.user.delivery_channels.filter(is_active=True)
+        for ch in channels:
+            if ch.channel_type == "telegram":
+                if send_telegram_reply(ch.identifier, alert_text):
+                    sent_count += 1
+            elif ch.channel_type == "whatsapp":
+                clean_txt = alert_text.replace("*", "").replace("_", "")
+                if send_whatsapp_message(ch.identifier, clean_txt):
+                    sent_count += 1
+
+    return f"Alerte Breaking News envoyée pour le topic {topic.id} ({sent_count} canaux notifiés)"
 
 
 @shared_task

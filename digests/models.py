@@ -31,6 +31,7 @@ class Topic(models.Model):
     category = models.CharField(max_length=100)
     importance_score = models.IntegerField(default=5)
     is_breaking_news = models.BooleanField(default=False)
+    alert_sent_at = models.DateTimeField(null=True, blank=True, help_text="Date d'envoi de l'alerte breaking news")
     centroid_embedding = VectorField(dimensions=768, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -89,6 +90,7 @@ class UserPreference(models.Model):
     min_importance_score = models.IntegerField(default=5)
     digest_hour = models.TimeField(default="07:00")
     timezone = models.CharField(max_length=50, default="Africa/Douala", help_text="Fuseau horaire (ex: Africa/Douala, Europe/Paris)")
+    receive_breaking_alerts = models.BooleanField(default=True, help_text="Recevoir les alertes d'urgence en temps réel")
     conversation_state = models.CharField(max_length=50, default="", blank=True)
 
     def __str__(self):

@@ -3,11 +3,25 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 import httpx
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth.models import User
 from digests.models import DeliveryChannel, UserPreference, Topic
-from digests.tasks import generate_user_digest_task
+from digests.tasks import generate_user_digest_task, answer_news_question_task
 
 logger = logging.getLogger(__name__)
+
+
+def send_ask_prompt(chat_id: str) -> None:
+    text = (
+        "💬 *Chat with your News — Posez votre question*\n\n"
+        "Je consulte en temps réel l'ensemble de nos dépêches et synthèses pour vous répondre.\n\n"
+        "Exemples de questions :\n"
+        "• _Que s'est-il passé de nouveau dans l'IA aujourd'hui ?_\n"
+        "• _Quels sont les détails sur le nouveau modèle de code ?_\n"
+        "• _Quels sont les impacts économiques majeurs ?_\n\n"
+        "👉 Tapez directement votre question (ou `/cancel` pour annuler)."
+    )
+    send_telegram_reply(chat_id, text)
 
 
 def send_telegram_reply(chat_id: str, text: str, parse_mode: str = "Markdown") -> bool:
@@ -362,13 +376,41 @@ def handle_telegram_update(update: dict) -> None:
             )
             return
 
+    # Machine à états : Question sur l'actualité (Chat with your News)
+    if state == "awaiting_news_question":
+        pref.conversation_state = ""
+        pref.save(update_fields=["conversation_state"])
+        send_telegram_reply(chat_id, "🔍 *Recherche et analyse des actualités en cours...* Je vous réponds dans quelques secondes.")
+        answer_news_question_task.delay(user.id, chat_id, text)
+        return
+
     # 7. Commande /digest
     if text.startswith("/digest"):
         send_telegram_reply(chat_id, "⏳ *Préparation de votre briefing en cours...* Je vous l'envoie dès qu'il est prêt !")
         generate_user_digest_task.delay(user.id)
         return
 
-    # 8. Commande /heure ou /time
+    # 8. Commande /ask ou /chat (Chat with your News)
+    if text.startswith("/ask") or text.startswith("/chat"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip():
+            question = parts[1].strip()
+            send_telegram_reply(chat_id, "🔍 *Recherche et analyse des dépêches en cours...* Je vous réponds dans un instant.")
+            answer_news_question_task.delay(user.id, chat_id, question)
+            return
+        else:
+            pref.conversation_state = "awaiting_news_question"
+            pref.save(update_fields=["conversation_state"])
+            send_ask_prompt(chat_id)
+            return
+
+    # 9. Commande /reset ou /clear (Effacer l'historique du chat)
+    if text.startswith("/reset") or text.startswith("/clear"):
+        cache.delete(f"news_chat_history:{user.id}")
+        send_telegram_reply(chat_id, "🧹 *Historique de conversation réinitialisé.* Vous pouvez poser une nouvelle question !")
+        return
+
+    # 10. Commande /heure ou /time
     if text.startswith("/heure") or text.startswith("/time"):
         parts = text.split(maxsplit=1)
         if len(parts) > 1:
@@ -393,7 +435,7 @@ def handle_telegram_update(update: dict) -> None:
             send_time_prompt(chat_id)
             return
 
-    # 9. Commande /fuseau ou /timezone
+    # 11. Commande /fuseau ou /timezone
     if text.startswith("/fuseau") or text.startswith("/timezone"):
         parts = text.split(maxsplit=1)
         if len(parts) > 1:
@@ -420,7 +462,7 @@ def handle_telegram_update(update: dict) -> None:
             send_timezone_prompt(chat_id)
             return
 
-    # 10. Commande /format
+    # 12. Commande /format
     if text.startswith("/format"):
         parts = text.split()
         if len(parts) > 1 and parts[1].lower() in ["audio", "text", "both"]:
@@ -431,7 +473,7 @@ def handle_telegram_update(update: dict) -> None:
             send_telegram_reply(chat_id, "Usage : `/format audio`, `/format text`, ou `/format both`")
         return
 
-    # 11. Commande /status
+    # 13. Commande /status
     if text.startswith("/status"):
         cats = [label for _, (code, label) in AVAILABLE_CATEGORIES.items() if code in pref.followed_categories]
         cats_str = ", ".join(cats) if cats else ("Tous les domaines" if not pref.keywords else "Aucune catégorie standard")
@@ -451,18 +493,32 @@ def handle_telegram_update(update: dict) -> None:
             f"• ⏰ Réveil automatique : *{pref.digest_hour.strftime('%H:%M')}*\n"
             f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n\n"
             "💡 *Commandes disponibles :*\n"
+            "• `/ask [question]` : Poser une question sur l'actualité (Chat with your News)\n"
             "• `/digest` : Recevoir votre briefing maintenant\n"
             "• `/heure` : Modifier l'heure de livraison matinale\n"
             "• `/fuseau` : Changer de fuseau horaire\n"
             "• `/topics` : Modifier vos thématiques d'actualités\n"
-            "• `/format` : Changer le format (text, audio, both)"
+            "• `/format` : Changer le format (text, audio, both)\n"
+            "• `/reset` : Réinitialiser la mémoire de discussion"
         )
         send_telegram_reply(chat_id, reply)
         return
 
-    # Message par défaut
+    # Traitement conversationnel par défaut : si texte libre non-commande, répondre à la question
+    if not text.startswith("/") and len(text) >= 3:
+        send_telegram_reply(chat_id, "🔍 *Analyse des actualités en cours...*")
+        answer_news_question_task.delay(user.id, chat_id, text)
+        return
+
+    # Message par défaut si texte vide ou commande inconnue
     send_telegram_reply(
         chat_id,
-        "Tapez `/digest` pour recevoir votre briefing, `/heure` pour l'envoi matinal automatique, `/topics` pour vos préférences, ou `/status` pour voir vos réglages."
+        "💡 *Comment utiliser Synapse :*\n\n"
+        "• Posez-moi directement une question sur l'actualité (ex: _Quelles nouvelles sur OpenAI ?_)\n"
+        "• `/ask` : Poser une question d'approfondissement\n"
+        "• `/digest` : Générer et recevoir votre briefing personnalisé\n"
+        "• `/heure` : Modifier l'heure du réveil matinal\n"
+        "• `/topics` : Configurer vos centres d'intérêt\n"
+        "• `/status` : Voir votre configuration actuelle"
     )
 

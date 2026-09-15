@@ -324,6 +324,87 @@ class ModelsTestCase(TestCase):
             self.assertIn("1 briefing(s) planifié(s) déclenché(s)", result)
             mock_delay.assert_called_once()
 
+    def test_news_chat_service_and_retrieval(self):
+        from unittest.mock import patch, MagicMock
+        from .services.news_chat import retrieve_relevant_news, answer_news_question
+
+        dummy_vec = [0.1] * 768
+        Article.objects.create(
+            source=self.source,
+            title="Percée majeure dans les processeurs quantiques",
+            url="https://techcrunch.com/quantum-leap-2026",
+            raw_content="Des chercheurs ont démontré un avantage quantique commercial.",
+            published_at=datetime.now(timezone.utc),
+            embedding=dummy_vec,
+        )
+
+        with patch("digests.services.news_chat.generate_embedding", return_value=dummy_vec):
+            items, context_str = retrieve_relevant_news("quantique")
+            self.assertTrue(len(items) > 0)
+            self.assertIn("quantique", context_str.lower())
+
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.text = "Voici une analyse journalistique sur l'ordinateur quantique [TechCrunch]."
+            mock_client.models.generate_content.return_value = mock_response
+
+            with patch("digests.services.news_chat.get_genai_client", return_value=mock_client):
+                answer = answer_news_question(self.user, "Explique-moi cette avancée quantique")
+                self.assertIn("ordinateur quantique", answer)
+                self.assertIn("[TechCrunch]", answer)
+
+    def test_telegram_ask_and_free_text_chat(self):
+        from unittest.mock import patch
+        from .services.telegram_bot import handle_telegram_update
+
+        # 1. /ask directe
+        with patch("digests.services.telegram_bot.answer_news_question_task.delay") as mock_delay:
+            handle_telegram_update({
+                "message": {
+                    "chat": {"id": 778899},
+                    "from": {"username": "chat_user", "first_name": "Chatter"},
+                    "text": "/ask Quels sont les impacts de l'IA ?",
+                }
+            })
+            mock_delay.assert_called_once()
+            args, _ = mock_delay.call_args
+            self.assertEqual(args[2], "Quels sont les impacts de l'IA ?")
+
+        # 2. /ask sans argument -> passage à l'état awaiting_news_question
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 778899},
+                "from": {"username": "chat_user"},
+                "text": "/ask",
+            }
+        })
+        user = User.objects.get(username="chat_user")
+        self.assertEqual(user.preference.conversation_state, "awaiting_news_question")
+
+        # 3. Réponse libre dans l'état awaiting_news_question
+        with patch("digests.services.telegram_bot.answer_news_question_task.delay") as mock_delay:
+            handle_telegram_update({
+                "message": {
+                    "chat": {"id": 778899},
+                    "from": {"username": "chat_user"},
+                    "text": "Peux-tu m'expliquer le projet SWE-2 ?",
+                }
+            })
+            user.preference.refresh_from_db()
+            self.assertEqual(user.preference.conversation_state, "")
+            mock_delay.assert_called_once()
+
+        # 4. Message texte direct hors commande -> Chat with your news
+        with patch("digests.services.telegram_bot.answer_news_question_task.delay") as mock_delay:
+            handle_telegram_update({
+                "message": {
+                    "chat": {"id": 778899},
+                    "from": {"username": "chat_user"},
+                    "text": "Que s'est-il passé hier avec Bitcoin ?",
+                }
+            })
+            mock_delay.assert_called_once()
+
 
 
 

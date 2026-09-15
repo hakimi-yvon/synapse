@@ -271,3 +271,35 @@ def dispatch_scheduled_morning_digests():
             dispatched_count += 1
 
     return f"{dispatched_count} briefing(s) planifié(s) déclenché(s)"
+
+
+@shared_task
+def answer_news_question_task(user_id: int, chat_id: str, question: str):
+    """
+    Exécute la recherche vectorielle et la génération IA pour répondre
+    à une question d'actualité posée par l'utilisateur sur Telegram.
+    """
+    import logging
+    from django.contrib.auth.models import User
+    from .services.news_chat import answer_news_question
+    from .services.telegram_bot import send_telegram_reply
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        send_telegram_reply(chat_id, "⚠️ Utilisateur introuvable.")
+        return "User introuvable"
+
+    try:
+        answer = answer_news_question(user, question)
+        send_telegram_reply(chat_id, answer)
+        return f"Réponse fournie à {user.username} pour '{question[:30]}'"
+    except Exception as e:
+        logger.error(f"Erreur answer_news_question_task: {e}")
+        send_telegram_reply(
+            chat_id,
+            "⚠️ Une erreur est survenue lors de l'analyse de votre question. Réessayez dans un instant."
+        )
+        return f"Erreur: {e}"

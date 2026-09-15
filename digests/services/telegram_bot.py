@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 import httpx
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -29,6 +31,50 @@ AVAILABLE_CATEGORIES = {
     "4": ("Dev", "🐍 Développement & Code"),
     "5": ("Finance", "📈 Économie & Finance"),
 }
+
+COMMON_TIMEZONES = {
+    "1": ("Africa/Douala", "🇨🇲 Afrique Centrale (Douala, UTC+1)"),
+    "2": ("Africa/Abidjan", "🇨🇮 Afrique de l'Ouest (Abidjan, UTC+0)"),
+    "3": ("Europe/Paris", "🇫🇷 France & Europe (Paris, UTC+1/UTC+2)"),
+    "4": ("Africa/Casablanca", "🇲🇦 Maroc (Casablanca, UTC+1)"),
+    "5": ("America/Montreal", "🇨🇦 Canada (Montréal, UTC-5/UTC-4)"),
+}
+
+
+def parse_time_string(val: str) -> time | None:
+    val = val.strip().lower().replace("h", ":")
+    try:
+        if ":" in val:
+            parts = val.split(":")
+            h = int(parts[0])
+            m = int(parts[1]) if parts[1] else 0
+        else:
+            h = int(val)
+            m = 0
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return time(h, m)
+    except Exception:
+        pass
+    return None
+
+
+def send_time_prompt(chat_id: str) -> None:
+    text = (
+        "⏰ *Programmation de votre Réveil Matinal*\n\n"
+        "À quelle heure souhaitez-vous recevoir votre briefing chaque matin ?\n\n"
+        "👉 Répondez avec l'heure souhaitée (ex: *07:00*, *07:30*, ou *8h*).\n"
+        "Tapez `/cancel` pour annuler."
+    )
+    send_telegram_reply(chat_id, text)
+
+
+def send_timezone_prompt(chat_id: str) -> None:
+    lines = ["🌍 *Choisissez votre fuseau horaire :*\n"]
+    for num, (_, label) in COMMON_TIMEZONES.items():
+        lines.append(f"{num}. {label}")
+    lines.append("6. ✏️ Autre (tapez le fuseau IANA de votre choix, ex: `America/New_York`)")
+    lines.append("\n👉 Répondez avec le *numéro* (ex: 1) ou le *nom* du fuseau.\nTapez `/cancel` pour annuler.")
+    send_telegram_reply(chat_id, "\n".join(lines))
 
 
 def send_scope_choice_prompt(chat_id: str) -> None:
@@ -174,6 +220,8 @@ def handle_telegram_update(update: dict) -> None:
             reply = (
                 f"✅ *Domaine unique configuré : {chosen_label}* !\n\n"
                 "Vos prochains briefings contiendront uniquement l'actualité de ce secteur.\n\n"
+                f"⏰ *Réveil matinal automatique* : programmé à *{pref.digest_hour.strftime('%H:%M')}* ({pref.timezone}).\n"
+                "Tapez `/heure` ou `/fuseau` pour modifier l'horaire.\n\n"
                 "📌 Tapez `/digest` pour recevoir immédiatement votre briefing personnalisé !"
             )
             send_telegram_reply(chat_id, reply)
@@ -187,6 +235,8 @@ def handle_telegram_update(update: dict) -> None:
             reply = (
                 f"✅ *Sujet personnalisé configuré : {clean_text}* !\n\n"
                 "Vos prochains briefings cibleront cette thématique.\n\n"
+                f"⏰ *Réveil matinal automatique* : programmé à *{pref.digest_hour.strftime('%H:%M')}* ({pref.timezone}).\n"
+                "Tapez `/heure` ou `/fuseau` pour modifier l'horaire.\n\n"
                 "📌 Tapez `/digest` pour lancer la génération !"
             )
             send_telegram_reply(chat_id, reply)
@@ -198,7 +248,12 @@ def handle_telegram_update(update: dict) -> None:
         pref.keywords = [clean_kw]
         pref.conversation_state = ""
         pref.save(update_fields=["followed_categories", "keywords", "conversation_state"])
-        send_telegram_reply(chat_id, f"✅ *Sujet configuré : {clean_kw}* !\nTapez `/digest` pour tester votre briefing.")
+        send_telegram_reply(
+            chat_id,
+            f"✅ *Sujet configuré : {clean_kw}* !\n"
+            f"⏰ Réveil automatique prévu chaque matin à *{pref.digest_hour.strftime('%H:%M')}* ({pref.timezone}).\n\n"
+            "Tapez `/digest` pour tester votre briefing."
+        )
         return
 
     # 6. Machine à états : Sélection de PLUSIEURS domaines
@@ -240,11 +295,72 @@ def handle_telegram_update(update: dict) -> None:
         reply = (
             "✅ *Vos préférences multiples ont été enregistrées avec succès !*\n\n"
             f"📋 *Domaines sélectionnés :*\n• " + "\n• ".join(summary_parts) + "\n\n"
+            f"⏰ *Réveil matinal automatique* : programmé à *{pref.digest_hour.strftime('%H:%M')}* ({pref.timezone}).\n"
+            "Tapez `/heure` ou `/fuseau` pour modifier l'horaire.\n\n"
             "Votre briefing combinera ces différents domaines.\n"
             "📌 Tapez `/digest` pour lancer votre briefing sur mesure !"
         )
         send_telegram_reply(chat_id, reply)
         return
+
+    # Machine à états : Réglage de l'heure du réveil matinal
+    if state == "awaiting_digest_hour":
+        parsed = parse_time_string(text)
+        if parsed:
+            pref.digest_hour = parsed
+            pref.conversation_state = ""
+            pref.save(update_fields=["digest_hour", "conversation_state"])
+            send_telegram_reply(
+                chat_id,
+                f"⏰ *Heure de réveil enregistrée !*\n\n"
+                f"Votre briefing vous sera automatiquement livré chaque matin à *{parsed.strftime('%H:%M')}* (fuseau : *{pref.timezone}*).\n"
+                "Tapez `/digest` pour tester immédiatement votre briefing."
+            )
+            return
+        else:
+            send_telegram_reply(
+                chat_id,
+                "⚠️ Format d'heure non reconnu. Répondez par exemple : *07:30*, *08:00* ou *8h* (ou tapez `/cancel` pour annuler)."
+            )
+            return
+
+    # Machine à états : Choix du fuseau horaire
+    if state == "awaiting_timezone":
+        chosen_tz = None
+        clean_tz = text.strip()
+        if clean_tz in COMMON_TIMEZONES:
+            chosen_tz = COMMON_TIMEZONES[clean_tz][0]
+        else:
+            try:
+                ZoneInfo(clean_tz)
+                chosen_tz = clean_tz
+            except Exception:
+                for _, (tz_id, label) in COMMON_TIMEZONES.items():
+                    if clean_tz.lower() in label.lower() or clean_tz.lower() in tz_id.lower():
+                        chosen_tz = tz_id
+                        break
+
+        if chosen_tz:
+            pref.timezone = chosen_tz
+            pref.conversation_state = ""
+            pref.save(update_fields=["timezone", "conversation_state"])
+            try:
+                cur_local = datetime.now(ZoneInfo(chosen_tz)).strftime("%H:%M")
+            except Exception:
+                cur_local = "--:--"
+            send_telegram_reply(
+                chat_id,
+                f"🌍 *Fuseau horaire enregistré : {chosen_tz}* !\n\n"
+                f"Heure locale actuelle : *{cur_local}*.\n"
+                f"Votre réveil matinal de *{pref.digest_hour.strftime('%H:%M')}* est désormais basé sur ce fuseau."
+            )
+            return
+        else:
+            send_telegram_reply(
+                chat_id,
+                "⚠️ Fuseau horaire non reconnu. Répondez avec un chiffre (ex: *1* à *5*) ou un fuseau IANA valide (ex: `Africa/Douala`, `Europe/Paris`)."
+            )
+            return
 
     # 7. Commande /digest
     if text.startswith("/digest"):
@@ -252,7 +368,59 @@ def handle_telegram_update(update: dict) -> None:
         generate_user_digest_task.delay(user.id)
         return
 
-    # 8. Commande /format
+    # 8. Commande /heure ou /time
+    if text.startswith("/heure") or text.startswith("/time"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1:
+            parsed = parse_time_string(parts[1])
+            if parsed:
+                pref.digest_hour = parsed
+                pref.save(update_fields=["digest_hour"])
+                send_telegram_reply(
+                    chat_id,
+                    f"⏰ Réveil matinal mis à jour : envoi quotidien à *{parsed.strftime('%H:%M')}* (fuseau : *{pref.timezone}*)."
+                )
+                return
+            else:
+                send_telegram_reply(
+                    chat_id,
+                    "⚠️ Format d'heure invalide. Exemples : `/heure 07:30`, `/heure 8h00`, `/heure 8h`."
+                )
+                return
+        else:
+            pref.conversation_state = "awaiting_digest_hour"
+            pref.save(update_fields=["conversation_state"])
+            send_time_prompt(chat_id)
+            return
+
+    # 9. Commande /fuseau ou /timezone
+    if text.startswith("/fuseau") or text.startswith("/timezone"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1:
+            input_tz = parts[1].strip()
+            try:
+                ZoneInfo(input_tz)
+                pref.timezone = input_tz
+                pref.save(update_fields=["timezone"])
+                cur_local = datetime.now(ZoneInfo(input_tz)).strftime("%H:%M")
+                send_telegram_reply(
+                    chat_id,
+                    f"🌍 Fuseau horaire mis à jour : *{input_tz}* (heure locale : *{cur_local}*)."
+                )
+                return
+            except Exception:
+                send_telegram_reply(
+                    chat_id,
+                    "⚠️ Fuseau horaire invalide. Exemples : `/fuseau Africa/Douala`, `/fuseau Europe/Paris`."
+                )
+                return
+        else:
+            pref.conversation_state = "awaiting_timezone"
+            pref.save(update_fields=["conversation_state"])
+            send_timezone_prompt(chat_id)
+            return
+
+    # 10. Commande /format
     if text.startswith("/format"):
         parts = text.split()
         if len(parts) > 1 and parts[1].lower() in ["audio", "text", "both"]:
@@ -263,11 +431,15 @@ def handle_telegram_update(update: dict) -> None:
             send_telegram_reply(chat_id, "Usage : `/format audio`, `/format text`, ou `/format both`")
         return
 
-    # 9. Commande /status
+    # 11. Commande /status
     if text.startswith("/status"):
         cats = [label for _, (code, label) in AVAILABLE_CATEGORIES.items() if code in pref.followed_categories]
         cats_str = ", ".join(cats) if cats else ("Tous les domaines" if not pref.keywords else "Aucune catégorie standard")
         kws_str = ", ".join(pref.keywords) if pref.keywords else "Aucun"
+        try:
+            cur_local = datetime.now(ZoneInfo(pref.timezone or "Africa/Douala")).strftime("%H:%M")
+        except Exception:
+            cur_local = "--:--"
 
         reply = (
             f"⚙️ *Votre Configuration Synapse*\n\n"
@@ -275,8 +447,15 @@ def handle_telegram_update(update: dict) -> None:
             f"• Format : *{pref.format_preference}*\n"
             f"• Domaines suivis : *{cats_str}*\n"
             f"• Mots-clés : *{kws_str}*\n"
-            f"• Score d'importance min : *{pref.min_importance_score}/10*\n\n"
-            "💡 Tapez `/topics` pour modifier vos domaines ou `/format` pour changer le format."
+            f"• Score d'importance min : *{pref.min_importance_score}/10*\n"
+            f"• ⏰ Réveil automatique : *{pref.digest_hour.strftime('%H:%M')}*\n"
+            f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n\n"
+            "💡 *Commandes disponibles :*\n"
+            "• `/digest` : Recevoir votre briefing maintenant\n"
+            "• `/heure` : Modifier l'heure de livraison matinale\n"
+            "• `/fuseau` : Changer de fuseau horaire\n"
+            "• `/topics` : Modifier vos thématiques d'actualités\n"
+            "• `/format` : Changer le format (text, audio, both)"
         )
         send_telegram_reply(chat_id, reply)
         return
@@ -284,6 +463,6 @@ def handle_telegram_update(update: dict) -> None:
     # Message par défaut
     send_telegram_reply(
         chat_id,
-        "Tapez `/digest` pour recevoir votre briefing, `/topics` pour changer vos domaines d'intérêt, ou `/status` pour voir vos réglages."
+        "Tapez `/digest` pour recevoir votre briefing, `/heure` pour l'envoi matinal automatique, `/topics` pour vos préférences, ou `/status` pour voir vos réglages."
     )
 

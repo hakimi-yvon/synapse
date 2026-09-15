@@ -133,11 +133,24 @@ MAILERS = {
     },
 }
 
+from celery.schedules import crontab
+
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = env('CELERY_TIMEZONE', default='UTC')
+
+CELERY_BEAT_SCHEDULE = {
+    'fetch-all-sources-hourly': {
+        'task': 'digests.tasks.fetch_all_sources',
+        'schedule': crontab(minute=0),
+    },
+    'check-scheduled-morning-digests': {
+        'task': 'digests.tasks.dispatch_scheduled_morning_digests',
+        'schedule': crontab(minute='*/10'),
+    },
+}
 
 # Gemini AI Configuration
 GEMINI_API_KEY = env('GEMINI_API_KEY', default=None)

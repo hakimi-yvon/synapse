@@ -88,6 +88,7 @@ class UserPreference(models.Model):
     keywords = models.JSONField(default=list, blank=True)
     min_importance_score = models.IntegerField(default=5)
     digest_hour = models.TimeField(default="07:00")
+    timezone = models.CharField(max_length=50, default="Africa/Douala", help_text="Fuseau horaire (ex: Africa/Douala, Europe/Paris)")
     conversation_state = models.CharField(max_length=50, default="", blank=True)
 
     def __str__(self):

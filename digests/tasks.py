@@ -208,11 +208,66 @@ def deliver_digest_task(digest_id):
 @shared_task
 def dispatch_daily_digests():
     """
-    Tâche périodique qui parcourt les utilisateurs ayant des préférences
-    et lance la génération de leur briefing.
+    Tâche de déclenchement manuel ou global qui parcourt les utilisateurs
+    et lance la génération immédiate de leur briefing.
     """
     from .models import UserPreference
     users_with_prefs = UserPreference.objects.values_list("user_id", flat=True)
     for user_id in users_with_prefs:
         generate_user_digest_task.delay(user_id)
     return f"{len(users_with_prefs)} digests planifiés"
+
+
+@shared_task
+def dispatch_scheduled_morning_digests():
+    """
+    Tâche périodique (exécutée toutes les 10 minutes par Celery Beat).
+    Pour chaque utilisateur :
+    - Détermine l'heure actuelle dans son fuseau horaire (UserPreference.timezone).
+    - Compare avec son heure de briefing programmée (UserPreference.digest_hour).
+    - Si l'heure locale correspond (fenêtre de 45 min) et qu'aucun briefing
+      n'a été généré pour aujourd'hui (date locale), déclenche la génération et l'envoi.
+    """
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+    from django.core.cache import cache
+    from .models import UserPreference, Digest
+
+    now_utc = datetime.now(timezone.utc)
+    dispatched_count = 0
+
+    prefs = UserPreference.objects.select_related("user").all()
+    for pref in prefs:
+        user = pref.user
+        tz_name = pref.timezone or "Africa/Douala"
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except Exception:
+            user_tz = ZoneInfo("Africa/Douala")
+
+        local_now = now_utc.astimezone(user_tz)
+        local_date = local_now.date()
+
+        # Évite les déclenchements en double via le cache et la base
+        cache_key = f"scheduled_digest_dispatched:{user.id}:{local_date}"
+        if cache.get(cache_key):
+            continue
+
+        if Digest.objects.filter(user=user, date=local_date).exists():
+            continue
+
+        target_time = pref.digest_hour or time(7, 0)
+        if isinstance(target_time, str):
+            parts = target_time.split(":")
+            target_time = time(int(parts[0]), int(parts[1]))
+
+        target_dt = datetime.combine(local_date, target_time, tzinfo=user_tz)
+        diff_seconds = (local_now - target_dt).total_seconds()
+
+        # Si l'heure actuelle est dans la fenêtre [0, 45 min[ après l'heure configurée
+        if 0 <= diff_seconds < 2700:
+            cache.set(cache_key, True, timeout=86400)
+            generate_user_digest_task.delay(user.id, target_date=local_date)
+            dispatched_count += 1
+
+    return f"{dispatched_count} briefing(s) planifié(s) déclenché(s)"

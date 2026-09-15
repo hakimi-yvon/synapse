@@ -225,6 +225,105 @@ class ModelsTestCase(TestCase):
         self.assertIn("IA", user.preference.followed_categories)
         self.assertIn("Cybersécurité", user.preference.keywords)
 
+    def test_parse_time_string(self):
+        from .services.telegram_bot import parse_time_string
+        from datetime import time
+
+        self.assertEqual(parse_time_string("07:30"), time(7, 30))
+        self.assertEqual(parse_time_string("7h30"), time(7, 30))
+        self.assertEqual(parse_time_string("8h"), time(8, 0))
+        self.assertEqual(parse_time_string("8"), time(8, 0))
+        self.assertIsNone(parse_time_string("25:00"))
+        self.assertIsNone(parse_time_string("invalid"))
+
+    def test_telegram_heure_and_fuseau_commands(self):
+        from .services.telegram_bot import handle_telegram_update
+        from datetime import time
+
+        # /heure directe
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user", "first_name": "Timer"},
+                "text": "/heure 08:45",
+            }
+        })
+        user = User.objects.get(username="timer_user")
+        self.assertEqual(user.preference.digest_hour, time(8, 45))
+
+        # /fuseau directe
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user"},
+                "text": "/fuseau Europe/Paris",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.timezone, "Europe/Paris")
+
+        # /heure conversationnelle
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user"},
+                "text": "/heure",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "awaiting_digest_hour")
+
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user"},
+                "text": "06:30",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "")
+        self.assertEqual(user.preference.digest_hour, time(6, 30))
+
+        # /fuseau conversationnelle par numéro
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user"},
+                "text": "/fuseau",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "awaiting_timezone")
+
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 445566},
+                "from": {"username": "timer_user"},
+                "text": "1",  # Africa/Douala
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "")
+        self.assertEqual(user.preference.timezone, "Africa/Douala")
+
+    def test_dispatch_scheduled_morning_digests(self):
+        from unittest.mock import patch
+        from zoneinfo import ZoneInfo
+        from .tasks import dispatch_scheduled_morning_digests
+
+        # Configurer l'utilisateur avec l'heure actuelle dans son fuseau
+        local_now = datetime.now(ZoneInfo("Africa/Douala"))
+        UserPreference.objects.create(
+            user=self.user,
+            digest_hour=local_now.time(),
+            timezone="Africa/Douala",
+        )
+
+        with patch("digests.tasks.generate_user_digest_task.delay") as mock_delay:
+            result = dispatch_scheduled_morning_digests()
+            self.assertIn("1 briefing(s) planifié(s) déclenché(s)", result)
+            mock_delay.assert_called_once()
+
 
 
 

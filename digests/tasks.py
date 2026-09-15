@@ -385,3 +385,124 @@ def answer_news_question_task(user_id: int, chat_id: str, question: str):
             "⚠️ Une erreur est survenue lors de l'analyse de votre question. Réessayez dans un instant."
         )
         return f"Erreur: {e}"
+
+
+@shared_task
+def process_voice_question_task(user_id: int, chat_id: str, voice_file_path: str):
+    """
+    Traite un message vocal Telegram (Voice-to-Voice) :
+    1. Transcrit l'audio via Gemini 2.5 Flash multimodal (audio/ogg).
+    2. Interroge le RAG d'actualités avec la question transcrite.
+    3. Vocalise la réponse textuelle avec une voix de studio neuronale (TTS).
+    4. Répond sur Telegram avec la note vocale audio (sendVoice) et la réponse textuelle détaillée.
+    """
+    import logging
+    import os
+    from pathlib import Path
+    from django.contrib.auth.models import User
+    from django.conf import settings
+    from google import genai
+    from google.genai import types
+    from .services.news_chat import answer_news_question
+    from .services.telegram_bot import send_telegram_reply, send_telegram_voice
+    from .services.tts import synthesize_text_to_file, clean_script_for_tts, VOICE_HENRI
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        send_telegram_reply(chat_id, "⚠️ Utilisateur introuvable.")
+        return "User introuvable"
+
+    transcription = ""
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        send_telegram_reply(chat_id, "⚠️ Service de transcription non configuré (clé Gemini manquante).")
+        return "Gemini API key manquante"
+
+    try:
+        client = genai.Client(api_key=api_key)
+        model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+
+        with open(voice_file_path, "rb") as f:
+            audio_bytes = f.read()
+
+        ext = Path(voice_file_path).suffix.lower()
+        mime_type = "audio/ogg" if ext in [".oga", ".ogg"] else "audio/mp3"
+
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                (
+                    "Tu es un assistant de veille journalistique haute précision. "
+                    "Écoute attentivement ce message vocal et retranscris mot à mot la question "
+                    "ou la requête de l'utilisateur en français. "
+                    "Ne renvoie AUCUN commentaire, uniquement la retranscription exacte du texte parlé."
+                )
+            ]
+        )
+        transcription = (response.text or "").strip()
+
+    except Exception as e:
+        logger.error(f"Erreur transcription audio Gemini: {e}")
+        send_telegram_reply(chat_id, "⚠️ Impossible de décoder ou transcrire votre message vocal.")
+        if os.path.exists(voice_file_path):
+            try:
+                os.remove(voice_file_path)
+            except Exception:
+                pass
+        return f"Erreur transcription: {e}"
+
+    if not transcription or len(transcription) < 3:
+        send_telegram_reply(chat_id, "🎙️ Je n'ai pas pu distinguer votre question. N'hésitez pas à réenregistrer ou à l'écrire par texte !")
+        if os.path.exists(voice_file_path):
+            try:
+                os.remove(voice_file_path)
+            except Exception:
+                pass
+        return "Transcription vide"
+
+    # Notifier l'utilisateur de ce qui a été compris
+    send_telegram_reply(chat_id, f"🎙️ *Question entendue :*\n« _{transcription}_ »\n\n*Recherche dans les dépêches et synthèse vocale en cours...*")
+
+    # Obtenir la réponse synthétisée par RAG
+    try:
+        answer = answer_news_question(user, transcription)
+    except Exception as e:
+        logger.error(f"Erreur génération réponse RAG: {e}")
+        send_telegram_reply(chat_id, "⚠️ Erreur lors de l'analyse des actualités pour votre question vocale.")
+        if os.path.exists(voice_file_path):
+            try:
+                os.remove(voice_file_path)
+            except Exception:
+                pass
+        return f"Erreur RAG: {e}"
+
+    # Synthèse vocale de la réponse
+    voice_response_path = voice_file_path + "_reply.mp3"
+    try:
+        spoken_text = clean_script_for_tts(answer)
+        if len(spoken_text) > 1200:
+            spoken_text = spoken_text[:1200] + "... Retrouvez tous les détails ci-dessous par écrit."
+        synthesize_text_to_file(spoken_text, voice_response_path, voice=VOICE_HENRI)
+
+        # Envoi de la note vocale sur Telegram
+        caption = f"🎙️ *Réponse Synapse* à : « {transcription[:50]}... »"
+        send_telegram_voice(chat_id, voice_response_path, caption=caption)
+    except Exception as e:
+        logger.error(f"Erreur synthèse audio réponse vocale: {e}")
+
+    # Envoi complémentaire du texte avec sources et liens
+    send_telegram_reply(chat_id, answer)
+
+    # Nettoyage des fichiers temporaires
+    for p in [voice_file_path, voice_response_path]:
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    return f"Voice question traitée pour user {user.username}"

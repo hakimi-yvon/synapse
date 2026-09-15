@@ -38,6 +38,34 @@ def send_telegram_reply(chat_id: str, text: str, parse_mode: str = "Markdown") -
         return False
 
 
+def send_telegram_voice(chat_id: str, audio_path: str, caption: str = "", parse_mode: str = "Markdown") -> bool:
+    """
+    Envoie une note vocale / fichier audio sur Telegram via l'API sendVoice (bulle vocale).
+    """
+    token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    if not token:
+        return False
+    try:
+        from pathlib import Path
+        path_obj = Path(audio_path)
+        if not path_obj.exists():
+            logger.warning(f"send_telegram_voice: fichier {audio_path} introuvable.")
+            return False
+
+        url = f"https://api.telegram.org/bot{token}/sendVoice"
+        with open(path_obj, "rb") as f:
+            files = {"voice": (path_obj.name, f, "audio/mpeg")}
+            data = {"chat_id": chat_id, "caption": caption[:1000], "parse_mode": parse_mode}
+            with httpx.Client(timeout=35.0) as client:
+                res = client.post(url, data=data, files=files)
+                if res.status_code != 200:
+                    logger.warning(f"Échec sendVoice: {res.text}")
+                return res.status_code == 200
+    except Exception as e:
+        logger.error(f"Erreur envoi sendVoice Telegram: {e}")
+        return False
+
+
 def answer_callback_query(callback_query_id: str, text: str = "", show_alert: bool = False) -> bool:
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
     if not token or not callback_query_id:
@@ -202,6 +230,39 @@ def handle_telegram_update(update: dict) -> None:
     )
 
     state = pref.conversation_state
+
+    # Traitement des messages vocaux (Voice-to-Voice Q&A)
+    voice_obj = message.get("voice") or message.get("audio")
+    if voice_obj:
+        file_id = voice_obj.get("file_id")
+        token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        if token and file_id:
+            send_telegram_reply(chat_id, "🎙️ *Message vocal bien reçu !* Analyse de votre question en cours...")
+            try:
+                import tempfile
+                from pathlib import Path
+                from digests.tasks import process_voice_question_task
+
+                file_info_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
+                with httpx.Client(timeout=20.0) as client:
+                    res = client.get(file_info_url)
+                    if res.status_code == 200:
+                        file_path_tg = res.json().get("result", {}).get("file_path")
+                        if file_path_tg:
+                            download_url = f"https://api.telegram.org/file/bot{token}/{file_path_tg}"
+                            file_bytes = client.get(download_url).content
+
+                            ext = Path(file_path_tg).suffix or ".oga"
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_f:
+                                tmp_f.write(file_bytes)
+                                local_path = tmp_f.name
+
+                            process_voice_question_task.delay(user.id, chat_id, local_path)
+                            return
+            except Exception as e:
+                logger.error(f"Erreur téléchargement note vocale: {e}")
+                send_telegram_reply(chat_id, "⚠️ Impossible de récupérer votre note vocale. Veuillez réessayer.")
+                return
 
     # 1. Commande d'annulation
     if text.startswith("/cancel"):
@@ -591,6 +652,7 @@ def handle_telegram_update(update: dict) -> None:
             f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n"
             f"• 🚨 Flashs Breaking News : *{'Activés 🔔' if pref.receive_breaking_alerts else 'Désactivés 🔕'}*\n\n"
             "💡 *Commandes disponibles :*\n"
+            "• 🎙️ Envoyez une note vocale : Posez votre question à l'oral, Synapse vous répond en vocal !\n"
             "• `/like` / `/dislike` : Noter le dernier briefing (apprentissage vectoriel)\n"
             "• `/ask [question]` : Poser une question sur l'actualité (Chat with your News)\n"
             "• `/alertes [on|off]` : Activer/désactiver les alertes d'urgence\n"
@@ -614,7 +676,8 @@ def handle_telegram_update(update: dict) -> None:
     send_telegram_reply(
         chat_id,
         "💡 *Comment utiliser Synapse :*\n\n"
-        "• Posez-moi directement une question sur l'actualité (ex: _Quelles nouvelles sur OpenAI ?_)\n"
+        "• 🎙️ *Envoyez une note vocale* : Posez votre question au micro et recevez une réponse audio !\n"
+        "• Posez directement une question écrite (ex: _Quelles nouvelles sur OpenAI ?_)\n"
         "• `/ask` : Poser une question d'approfondissement\n"
         "• `/digest` : Générer et recevoir votre briefing personnalisé\n"
         "• `/heure` : Modifier l'heure du réveil matinal\n"

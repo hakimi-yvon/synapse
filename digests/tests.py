@@ -160,6 +160,72 @@ class ModelsTestCase(TestCase):
         self.assertEqual(deliveries[0].status, "failed")
         self.assertIn("TELEGRAM_BOT_TOKEN", deliveries[0].error_message)
 
+    def test_telegram_conversational_topic_selection(self):
+        from .services.telegram_bot import handle_telegram_update
+        from django.contrib.auth.models import User
+
+        # Étape 1 : /start
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator", "first_name": "Curator"},
+                "text": "/start",
+            }
+        })
+        user = User.objects.get(username="test_curator")
+        self.assertEqual(user.preference.conversation_state, "awaiting_scope_choice")
+
+        # Étape 2 : L'utilisateur choisit 1 (Un seul domaine)
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator"},
+                "text": "1",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "awaiting_single_category")
+
+        # Étape 3 : L'utilisateur choisit 2 (IA)
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator"},
+                "text": "2",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertEqual(user.preference.conversation_state, "")
+        self.assertEqual(user.preference.followed_categories, ["IA"])
+
+        # Étape 4 : Reconfiguration multiple via /topics
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator"},
+                "text": "/topics",
+            }
+        })
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator"},
+                "text": "2",  # Plusieurs domaines
+            }
+        })
+        handle_telegram_update({
+            "message": {
+                "chat": {"id": 112233},
+                "from": {"username": "test_curator"},
+                "text": "1, 2, Cybersécurité",
+            }
+        })
+        user.preference.refresh_from_db()
+        self.assertIn("Tech", user.preference.followed_categories)
+        self.assertIn("IA", user.preference.followed_categories)
+        self.assertIn("Cybersécurité", user.preference.keywords)
+
+
 
 
 

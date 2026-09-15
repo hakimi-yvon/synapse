@@ -88,6 +88,7 @@ class UserPreference(models.Model):
     keywords = models.JSONField(default=list, blank=True)
     min_importance_score = models.IntegerField(default=5)
     digest_hour = models.TimeField(default="07:00")
+    conversation_state = models.CharField(max_length=50, default="", blank=True)
 
     def __str__(self):
         return f"Préférences de {self.user.username}"

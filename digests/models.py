@@ -116,6 +116,7 @@ class Digest(models.Model):
     date = models.DateField()
     topics = models.ManyToManyField(Topic)
     audio_url = models.URLField(null=True, blank=True)
+    infographic_url = models.URLField(null=True, blank=True)
     script_text = models.TextField(blank=True)
 
     class Meta:
@@ -123,6 +124,26 @@ class Digest(models.Model):
 
     def __str__(self):
         return f"Digest {self.date} pour {self.user.username}"
+
+
+class Watchlist(models.Model):
+    """
+    Sujets, entreprises ou mots-clés spécifiques surveillés par l'utilisateur
+    pour recevoir des alertes ciblées dès ingestion d'articles pertinents.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="watchlists")
+    query = models.CharField(max_length=150, help_text="Sujet, mot-clé ou entreprise surveillée")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    last_notified_at = models.DateTimeField(null=True, blank=True)
+    matches_count = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("user", "query")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.username} surveille '{self.query}'"
 
 
 class DigestDelivery(models.Model):

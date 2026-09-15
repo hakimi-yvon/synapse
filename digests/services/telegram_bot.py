@@ -629,12 +629,99 @@ def handle_telegram_update(update: dict) -> None:
             )
             return
 
-    # 15. Commande /status
+    # 15. Watchlist Intelligente : /suivre <sujet>
+    if text.startswith("/suivre") or text.startswith("/follow") or text.startswith("/watch"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip():
+            query_str = parts[1].strip()
+            from digests.models import Watchlist
+            wl, created = Watchlist.objects.get_or_create(
+                user=user,
+                query=query_str,
+                defaults={"is_active": True}
+            )
+            if not created and not wl.is_active:
+                wl.is_active = True
+                wl.save(update_fields=["is_active"])
+
+            msg = (
+                f"🎯 *Veille activée pour « {query_str} » !*\n\n"
+                "Dès qu'un nouvel article mentionnera ce sujet ou cette entreprise, "
+                "vous recevrez une notification instantanée ici même.\n\n"
+                "• Tapez `/mes_sujets` pour voir vos sujets sous surveillance.\n"
+                f"• Tapez `/arreter_suivi {query_str}` pour stopper cette veille."
+            )
+            send_telegram_reply(chat_id, msg)
+            return
+        else:
+            send_telegram_reply(
+                chat_id,
+                "⚠️ Précisez le sujet à surveiller.\nExemples : `/suivre OpenAI`, `/suivre Nvidia`, `/suivre Bitcoin`."
+            )
+            return
+
+    # 16. Watchlist Intelligente : /mes_sujets ou /watchlist
+    if text.startswith("/mes_sujets") or text.startswith("/watchlist") or text.startswith("/suivis"):
+        from digests.models import Watchlist
+        wls = list(Watchlist.objects.filter(user=user, is_active=True))
+        if not wls:
+            send_telegram_reply(
+                chat_id,
+                "📭 *Vous n'avez aucun sujet en veille active pour le moment.*\n\n"
+                "Pour commencer à surveiller une entreprise ou technologie, tapez : `/suivre <sujet>`\n"
+                "Exemple : `/suivre OpenAI`"
+            )
+            return
+
+        lines = ["🎯 *Vos veilles thématiques actives :*\n"]
+        for idx, item in enumerate(wls, start=1):
+            plural = "alertes reçues" if item.matches_count != 1 else "alerte reçue"
+            lines.append(f"{idx}. *{item.query}* — _{item.matches_count} {plural}_")
+
+        lines.append("\n💡 Pour supprimer un suivi, tapez :\n`/arreter_suivi <nom>` (ex: `/arreter_suivi OpenAI`)")
+        send_telegram_reply(chat_id, "\n".join(lines))
+        return
+
+    # 17. Watchlist Intelligente : /arreter_suivi ou /stop_suivi
+    if text.startswith("/arreter_suivi") or text.startswith("/unwatch") or text.startswith("/stop_suivi"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip():
+            target = parts[1].strip()
+            from digests.models import Watchlist
+            wls = list(Watchlist.objects.filter(user=user, is_active=True))
+            deleted = False
+            if target.isdigit():
+                idx = int(target) - 1
+                if 0 <= idx < len(wls):
+                    item = wls[idx]
+                    item.is_active = False
+                    item.save(update_fields=["is_active"])
+                    deleted = True
+                    target = item.query
+            else:
+                updated = Watchlist.objects.filter(user=user, query__iexact=target, is_active=True).update(is_active=False)
+                deleted = (updated > 0)
+
+            if deleted:
+                send_telegram_reply(chat_id, f"✅ Veille arrêtée pour le sujet « *{target}* ».")
+            else:
+                send_telegram_reply(chat_id, f"⚠️ Aucun sujet actif trouvé pour « {target} ». Tapez `/mes_sujets` pour voir vos veilles en cours.")
+            return
+        else:
+            send_telegram_reply(chat_id, "Usage : `/arreter_suivi <nom du sujet>` (ex: `/arreter_suivi OpenAI`).")
+            return
+
+    # 18. Commande /status
     if text.startswith("/status"):
         cats = [label for _, (code, label) in AVAILABLE_CATEGORIES.items() if code in pref.followed_categories]
         cats_str = ", ".join(cats) if cats else ("Tous les domaines" if not pref.keywords else "Aucune catégorie standard")
         kws_str = ", ".join(pref.keywords) if pref.keywords else "Aucun"
         has_learned = "Personnalisé ✨" if pref.interest_vector else "Standard (en attente de feedback)"
+        
+        from digests.models import Watchlist
+        active_wls_count = Watchlist.objects.filter(user=user, is_active=True).count()
+        wl_summary = f"{active_wls_count} sujet(s) actif(s)" if active_wls_count > 0 else "Aucun (tapez /suivre)"
+
         try:
             cur_local = datetime.now(ZoneInfo(pref.timezone or "Africa/Douala")).strftime("%H:%M")
         except Exception:
@@ -646,15 +733,18 @@ def handle_telegram_update(update: dict) -> None:
             f"• Profil d'apprentissage : *{has_learned}*\n"
             f"• Format : *{pref.format_preference}*\n"
             f"• Domaines suivis : *{cats_str}*\n"
-            f"• Mots-clés : *{kws_str}*\n"
+            f"• Mots-clés généraux : *{kws_str}*\n"
+            f"• 🎯 Watchlist personnalisée : *{wl_summary}*\n"
             f"• Score d'importance min : *{pref.min_importance_score}/10*\n"
             f"• ⏰ Réveil automatique : *{pref.digest_hour.strftime('%H:%M')}*\n"
             f"• 🌍 Fuseau horaire : *{pref.timezone}* (heure locale : *{cur_local}*)\n"
             f"• 🚨 Flashs Breaking News : *{'Activés 🔔' if pref.receive_breaking_alerts else 'Désactivés 🔕'}*\n\n"
             "💡 *Commandes disponibles :*\n"
-            "• 🎙️ Envoyez une note vocale : Posez votre question à l'oral, Synapse vous répond en vocal !\n"
-            "• `/like` / `/dislike` : Noter le dernier briefing (apprentissage vectoriel)\n"
+            "• 🎙️ Envoyez une note vocale : Question orale -> Réponse en audio !\n"
+            "• `/suivre [sujet]` : Surveillance ciblée (ex: `/suivre Nvidia`)\n"
+            "• `/mes_sujets` : Gérer vos sujets en veille\n"
             "• `/ask [question]` : Poser une question sur l'actualité (Chat with your News)\n"
+            "• `/like` / `/dislike` : Noter le dernier briefing (apprentissage vectoriel)\n"
             "• `/alertes [on|off]` : Activer/désactiver les alertes d'urgence\n"
             "• `/digest` : Recevoir votre briefing maintenant\n"
             "• `/heure` : Modifier l'heure de livraison matinale\n"
@@ -677,6 +767,7 @@ def handle_telegram_update(update: dict) -> None:
         chat_id,
         "💡 *Comment utiliser Synapse :*\n\n"
         "• 🎙️ *Envoyez une note vocale* : Posez votre question au micro et recevez une réponse audio !\n"
+        "• 🎯 `/suivre <sujet>` : Surveillez une entreprise ou mot-clé (alerte immédiate)\n"
         "• Posez directement une question écrite (ex: _Quelles nouvelles sur OpenAI ?_)\n"
         "• `/ask` : Poser une question d'approfondissement\n"
         "• `/digest` : Générer et recevoir votre briefing personnalisé\n"

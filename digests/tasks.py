@@ -68,10 +68,66 @@ def embed_article(article_id):
     article.embedding = generate_embedding(text)
     article.save(update_fields=["embedding"])
 
-    # Enchaînement asynchrone du clustering sémantique
+    # Enchaînement asynchrone du clustering sémantique et des veilles personnalisées
     cluster_article_task.delay(article.id)
+    check_article_watchlists_task.delay(article.id)
 
     return f"Embedding généré pour: {article.title}"
+
+
+@shared_task
+def check_article_watchlists_task(article_id: int):
+    """
+    Vérifie si un nouvel article correspond aux requêtes surveillées
+    par des utilisateurs dans leur Watchlist et leur envoie une alerte ciblée.
+    """
+    import logging
+    from datetime import datetime, timezone
+    from .models import Article, Watchlist, DeliveryChannel
+    from .services.telegram_bot import send_telegram_reply
+
+    logger = logging.getLogger(__name__)
+    try:
+        article = Article.objects.select_related("source").get(id=article_id)
+    except Article.DoesNotExist:
+        return f"Article {article_id} introuvable"
+
+    active_watchlists = Watchlist.objects.filter(is_active=True).select_related("user")
+    if not active_watchlists.exists():
+        return "Aucune watchlist active"
+
+    title_lower = (article.title or "").lower()
+    content_lower = (article.raw_content or "").lower()
+    notified_count = 0
+
+    for wl in active_watchlists:
+        q = wl.query.lower().strip()
+        if not q:
+            continue
+
+        if q in title_lower or q in content_lower:
+            channel = DeliveryChannel.objects.filter(
+                user=wl.user,
+                channel_type="telegram",
+                is_active=True
+            ).first()
+
+            if channel:
+                source_name = article.source.name if article.source else "Actualité"
+                msg = (
+                    f"🎯 *Alerte Watchlist : Suivi « {wl.query} »*\n\n"
+                    f"Un nouvel article pertinent vient d'être détecté :\n"
+                    f"📰 *{article.title}*\n\n"
+                    f"🏢 *Source :* {source_name}\n"
+                    f"🔗 [Consulter l'article original]({article.url})"
+                )
+                if send_telegram_reply(channel.identifier, msg):
+                    wl.matches_count += 1
+                    wl.last_notified_at = datetime.now(timezone.utc)
+                    wl.save(update_fields=["matches_count", "last_notified_at"])
+                    notified_count += 1
+
+    return f"{notified_count} alerte(s) watchlist envoyée(s) pour article {article_id}"
 
 
 @shared_task

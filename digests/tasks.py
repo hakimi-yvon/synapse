@@ -301,6 +301,13 @@ def generate_user_digest_task(user_id, target_date=None):
     )
     digest.topics.set(topics)
 
+    # Génération de l'infographie visuelle de synthèse
+    try:
+        from .services.infographic import generate_infographic_for_digest
+        generate_infographic_for_digest(digest)
+    except Exception as e:
+        logger.error(f"Erreur génération infographie digest {digest.id}: {e}")
+
     # Déclencher la synthèse vocale si l'utilisateur souhaite de l'audio
     if pref.format_preference in ["audio", "both"]:
         generate_digest_audio_task.delay(digest.id)

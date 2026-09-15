@@ -30,7 +30,7 @@
             </div>
             <div>
                 <h3 class="text-base font-bold text-white">Écouter le podcast radio</h3>
-                <p class="text-xs text-gray-400">Généré par la voix neuronale fr-FR-HenriNeural</p>
+                <p class="text-xs text-gray-400">Duo Radio studio (Henri & Denise)</p>
             </div>
         </div>
         <div class="w-full sm:w-80">
@@ -38,6 +38,27 @@
                 <source src="{{ digest.audio_url }}" type="audio/mpeg">
                 Navigateur incompatible audio.
             </audio>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Infographie Visuelle du Briefing -->
+    {% if digest.infographic_url %}
+    <div class="glass rounded-2xl p-6 border border-indigo-500/30 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-gray-800">
+            <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <i class="fa-solid fa-chart-pie text-indigo-400"></i>
+                <span>Infographie de Synthèse Visuelle</span>
+            </h3>
+            <a href="{{ digest.infographic_url }}" download class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1.5">
+                <i class="fa-solid fa-download"></i>
+                <span>Télécharger l'image HD</span>
+            </a>
+        </div>
+        <div class="flex justify-center bg-gray-950/60 p-4 rounded-xl border border-gray-800">
+            <a href="{{ digest.infographic_url }}" target="_blank" class="block max-w-md w-full shadow-2xl rounded-xl overflow-hidden hover:opacity-95 transition">
+                <img src="{{ digest.infographic_url }}" alt="Infographie Synapse {{ digest.date }}" class="w-full h-auto rounded-xl">
+            </a>
         </div>
     </div>
     {% endif %}

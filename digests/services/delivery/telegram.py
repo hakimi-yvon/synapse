@@ -35,7 +35,22 @@ class TelegramDeliveryService(BaseDeliveryService):
 
         try:
             with httpx.Client(timeout=30.0) as client:
-                # 1. Envoi de l'audio si présent et demandé
+                # 1. Envoi de l'infographie visuelle de synthèse si disponible
+                if digest.infographic_url:
+                    local_img_path = Path(settings.BASE_DIR) / digest.infographic_url.lstrip("/")
+                    if local_img_path.exists():
+                        with open(local_img_path, "rb") as f_img:
+                            img_files = {"photo": (local_img_path.name, f_img, "image/png")}
+                            img_data = {
+                                "chat_id": chat_id,
+                                "caption": f"📊 *Synapse Infographie — {digest.date}*\nVotre condensé visuel de la matinée.",
+                                "parse_mode": "Markdown",
+                            }
+                            img_res = client.post(f"{self.api_url}/sendPhoto", data=img_data, files=img_files)
+                            if img_res.status_code != 200:
+                                logger.warning(f"Échec envoi infographie Telegram : {img_res.text}")
+
+                # 2. Envoi de l'audio si présent et demandé
                 if format_pref in ["audio", "both"] and digest.audio_url:
                     local_audio_path = Path(settings.BASE_DIR) / digest.audio_url.lstrip("/")
                     if local_audio_path.exists():

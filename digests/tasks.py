@@ -135,6 +135,23 @@ def generate_user_digest_task(user_id, target_date=None):
 
     topics = list(topics_qs.order_by("-importance_score")[:7])
     if not topics:
+        # Fallback : si aucun sujet dans les 24h, récupérer les plus récents disponibles en base
+        fallback_qs = Topic.objects.filter(importance_score__gte=pref.min_importance_score)
+        if pref.followed_categories:
+            fallback_qs = fallback_qs.filter(category__in=pref.followed_categories)
+        if pref.keywords:
+            fallback_qs = fallback_qs.filter(keyword_query)
+        topics = list(fallback_qs.order_by("-created_at", "-importance_score")[:7])
+
+    if not topics:
+        from .services.telegram_bot import send_telegram_reply
+        tg_channel = user.delivery_channels.filter(channel_type="telegram", is_active=True).first()
+        if tg_channel:
+            send_telegram_reply(
+                tg_channel.identifier,
+                "ℹ️ *Aucune actualité n'est encore enregistrée.* Une collecte automatique a été lancée, réessayez dans 30 secondes avec `/digest` !",
+            )
+        fetch_all_sources.delay()
         return f"Aucun topic éligible pour {user.username} le {digest_date}"
 
     script = generate_digest_script(topics, format_preference=pref.format_preference)

@@ -1,0 +1,15 @@
+[Unit]
+Description=Synapse Telegram Bot and Celery Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hakimi/synapse
+ExecStart=/bin/bash /home/hakimi/synapse/run_local.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

@@ -278,12 +278,26 @@ Une interface web épurée et moderne permet de superviser l'ensemble de la plat
 
 ## 15. Exécution Locale & Déploiement
 
-### Lancement Rapide en Local
+### Lancement en Tâche de Fond Continue (Service systemd)
 
-Pour lancer l'environnement complet :
+Pour faire tourner Synapse en permanence en arrière-plan (démarrage automatique au boot, redémarrage en cas de crash, sans garder de terminal ouvert) :
 
 ```bash
-# Option 1 : Lancement unifié de tous les services (Dashboard, Celery, Bot)
+# 1. Installer et activer le service (à faire une seule fois)
+./service.sh install
+
+# 2. Gestion du service au quotidien
+./service.sh start       # Démarrer le bot et le worker
+./service.sh status      # Vérifier l'état d'exécution
+./service.sh logs        # Suivre les logs en temps réel (Ctrl+C pour quitter)
+./service.sh restart     # Redémarrer les services
+./service.sh stop        # Arrêter le bot
+```
+
+### Lancement Manuel en Local (Mode interactif)
+
+```bash
+# Option 1 : Lancement unifié interactif (Celery + Bot)
 ./run_local.sh
 
 # Option 2 : Lancement individuel du serveur web

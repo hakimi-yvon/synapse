@@ -22,7 +22,7 @@ environ.Env.read_env(BASE_DIR / '.env')
 
 SECRET_KEY = env('SECRET_KEY')
 DEBUG = env.bool('DEBUG', default=False)
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'] if DEBUG else ['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 
 # Application definition
@@ -118,6 +118,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
+LOGIN_URL = 'admin:login'
+
 STATIC_URL = 'static/'
 
 MEDIA_URL = 'media/'
@@ -160,6 +162,7 @@ GEMINI_MODEL = env('GEMINI_MODEL', default='gemini-2.5-flash')
 
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN', default=None)
+TELEGRAM_WEBHOOK_SECRET = env('TELEGRAM_WEBHOOK_SECRET', default=None)
 
 # WhatsApp Configuration (Twilio ou Meta Cloud API)
 WHATSAPP_PROVIDER = env('WHATSAPP_PROVIDER', default='twilio')  # 'twilio' ou 'meta'

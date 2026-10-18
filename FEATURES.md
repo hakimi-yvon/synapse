@@ -278,6 +278,19 @@ Une interface web épurée et moderne permet de superviser l'ensemble de la plat
 
 ## 15. Exécution Locale & Déploiement
 
+### Sécurité du Webhook Telegram & du Dashboard
+
+* Définir `TELEGRAM_WEBHOOK_SECRET` dans `.env` (chaîne aléatoire, 1 à 256 caractères `A-Za-z0-9_-`), puis enregistrer le webhook avec ce secret : sans lui, `/webhook/telegram/` répond `403`.
+
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d url="https://VOTRE_DOMAINE/webhook/telegram/" \
+  -d secret_token="$TELEGRAM_WEBHOOK_SECRET"
+```
+
+* Le dashboard web (`/`, `/archives/`, `/digest/<id>/`, `/generate/`) est réservé aux comptes *staff* (connexion via `/admin/`).
+* En `DEBUG`, `ALLOWED_HOSTS` n'est plus `*` par défaut : renseigner `ALLOWED_HOSTS` dans `.env` si nécessaire.
+
 ### Lancement en Tâche de Fond Continue (Service systemd)
 
 Pour faire tourner Synapse en permanence en arrière-plan (démarrage automatique au boot, redémarrage en cas de crash, sans garder de terminal ouvert) :

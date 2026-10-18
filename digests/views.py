@@ -1,9 +1,13 @@
+import hmac
 import json
 import logging
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.http import JsonResponse, HttpResponse
+from django.conf import settings
+from django.contrib.admin.views.decorators import staff_member_required
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from .models import Digest, Article, Source, Topic
 from .tasks import fetch_all_sources, dispatch_daily_digests
 from .services.telegram_bot import handle_telegram_update
@@ -11,6 +15,7 @@ from .services.telegram_bot import handle_telegram_update
 logger = logging.getLogger(__name__)
 
 
+@staff_member_required
 def dashboard(request):
     """
     Page d'accueil et tableau de bord principal avec le dernier podcast audio,
@@ -34,6 +39,7 @@ def dashboard(request):
     return render(request, "digests/dashboard.html", context)
 
 
+@staff_member_required
 def digest_detail(request, digest_id):
     """
     Vue détaillée d'une archive de briefing avec écoute audio et analyse par sujet.
@@ -42,6 +48,7 @@ def digest_detail(request, digest_id):
     return render(request, "digests/digest_detail.html", {"digest": digest})
 
 
+@staff_member_required
 def archive_list(request):
     """
     Liste chronologique de tous les briefings archivés.
@@ -50,14 +57,15 @@ def archive_list(request):
     return render(request, "digests/archives.html", {"digests": digests})
 
 
+@staff_member_required
+@require_POST
 def trigger_generation_view(request):
     """
     Bouton web permettant de lancer manuellement une collecte et une synthèse d'actualités.
     """
-    if request.method == "POST":
-        fetch_all_sources.delay()
-        dispatch_daily_digests.delay()
-        messages.success(request, "Collecte et génération du briefing lancées en tâche de fond !")
+    fetch_all_sources.delay()
+    dispatch_daily_digests.delay()
+    messages.success(request, "Collecte et génération du briefing lancées en tâche de fond !")
     return redirect("dashboard")
 
 
@@ -69,13 +77,18 @@ def telegram_webhook(request):
     if request.method != "POST":
         return HttpResponse("Méthode non autorisée", status=405)
 
+    expected = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", None)
+    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not expected or not hmac.compare_digest(received, expected):
+        return HttpResponse("Forbidden", status=403)
+
     try:
         data = json.loads(request.body.decode("utf-8"))
         handle_telegram_update(data)
         return JsonResponse({"status": "ok"})
-    except Exception as e:
-        logger.error(f"Erreur traitement webhook Telegram: {e}")
-        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+    except Exception:
+        logger.exception("Erreur traitement webhook Telegram")
+        return JsonResponse({"status": "error"}, status=400)
 
 
 @csrf_exempt

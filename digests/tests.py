@@ -559,3 +559,155 @@ class ModelsTestCase(TestCase):
 
 
 
+
+
+from unittest import mock
+from django.core.cache import cache
+from django.test import override_settings
+
+
+@override_settings(TELEGRAM_WEBHOOK_SECRET="s3cret")
+class TelegramWebhookSecurityTests(TestCase):
+    url = "/webhook/telegram/"
+
+    def test_missing_secret_header_is_forbidden(self):
+        resp = self.client.post(self.url, data="{}", content_type="application/json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_wrong_secret_is_forbidden(self):
+        resp = self.client.post(
+            self.url, data="{}", content_type="application/json",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "nope"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    @mock.patch("digests.views.handle_telegram_update")
+    def test_valid_secret_dispatches_update(self, handler):
+        resp = self.client.post(
+            self.url, data="{}", content_type="application/json",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "s3cret"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        handler.assert_called_once()
+
+    @override_settings(TELEGRAM_WEBHOOK_SECRET=None)
+    def test_unconfigured_secret_rejects_everything(self):
+        resp = self.client.post(self.url, data="{}", content_type="application/json")
+        self.assertEqual(resp.status_code, 403)
+
+
+class TelegramIdentityTests(TestCase):
+    def test_username_collision_does_not_hijack_account(self):
+        from .services.telegram_bot import get_or_create_telegram_user
+        admin = User.objects.create_user(username="admin")
+        user = get_or_create_telegram_user("42", "42", "Mallory")
+        self.assertNotEqual(user.id, admin.id)
+        self.assertEqual(user.username, "tg_42")
+
+    def test_existing_channel_user_is_found(self):
+        from .services.telegram_bot import get_or_create_telegram_user
+        existing = User.objects.create_user(username="legacy_name")
+        DeliveryChannel.objects.create(user=existing, channel_type="telegram", identifier="99")
+        self.assertEqual(get_or_create_telegram_user("99", "99").id, existing.id)
+
+
+class DashboardAccessTests(TestCase):
+    def test_anonymous_is_redirected_to_login(self):
+        for path in ["/", "/archives/"]:
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 302)
+            self.assertIn("login", resp.url)
+
+    def test_staff_can_view_dashboard(self):
+        staff = User.objects.create_user(username="staff", is_staff=True)
+        self.client.force_login(staff)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_generate_requires_post(self):
+        staff = User.objects.create_user(username="staff2", is_staff=True)
+        self.client.force_login(staff)
+        self.assertEqual(self.client.get("/generate/").status_code, 405)
+
+
+class SendTelegramReplyTests(TestCase):
+    def _client(self, codes):
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.post.side_effect = [mock.Mock(status_code=c, text="err") for c in codes]
+        return client
+
+    @override_settings(TELEGRAM_BOT_TOKEN="t")
+    def test_ok(self):
+        from .services.telegram_bot import send_telegram_reply
+        with mock.patch("httpx.Client", return_value=self._client([200])):
+            self.assertTrue(send_telegram_reply("1", "hi"))
+
+    @override_settings(TELEGRAM_BOT_TOKEN="t")
+    def test_markdown_failure_falls_back_to_plain_text(self):
+        from .services.telegram_bot import send_telegram_reply
+        c = self._client([400, 200])
+        with mock.patch("httpx.Client", return_value=c):
+            self.assertTrue(send_telegram_reply("1", "a_b*"))
+        self.assertEqual(c.post.call_count, 2)
+        self.assertNotIn("parse_mode", c.post.call_args.kwargs["json"])
+
+    @override_settings(TELEGRAM_BOT_TOKEN="t")
+    def test_double_failure_returns_false(self):
+        from .services.telegram_bot import send_telegram_reply
+        with mock.patch("httpx.Client", return_value=self._client([400, 400])):
+            self.assertFalse(send_telegram_reply("1", "x"))
+
+
+class TaskBehaviourTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(username="u")
+        self.source = Source.objects.create(name="S", url="https://s/feed", source_type="rss", category="Tech")
+
+    def _article(self, title, content=""):
+        return Article.objects.create(
+            source=self.source, title=title, url=f"https://s/{title}",
+            raw_content=content, published_at=datetime.now(timezone.utc),
+        )
+
+    def test_infographic_failure_does_not_block_delivery(self):
+        from . import tasks
+        UserPreference.objects.create(user=self.user, format_preference="text", min_importance_score=1)
+        topic = Topic.objects.create(title="T", importance_score=5)
+        with mock.patch.object(tasks, "generate_digest_script", return_value="x"), \
+             mock.patch("digests.services.infographic.generate_infographic_for_digest", side_effect=RuntimeError("boom")), \
+             mock.patch.object(tasks.deliver_digest_task, "delay") as deliver:
+            tasks.generate_user_digest_task(self.user.id)
+        deliver.assert_called_once()
+
+    def test_breaking_alert_sent_once(self):
+        from . import tasks
+        topic = Topic.objects.create(title="T", importance_score=10, is_breaking_news=True)
+        UserPreference.objects.create(user=self.user)
+        DeliveryChannel.objects.create(user=self.user, channel_type="telegram", identifier="1")
+        with mock.patch("digests.services.telegram_bot.send_telegram_reply", return_value=True) as send:
+            tasks.dispatch_breaking_news_alert_task(topic.id)
+            tasks.dispatch_breaking_news_alert_task(topic.id)
+        self.assertEqual(send.call_count, 1)
+
+    def test_summaries_are_debounced_per_topic(self):
+        from . import tasks
+        topic = Topic.objects.create(title="T")
+        arts = [self._article(f"a{i}") for i in range(5)]
+        with mock.patch.object(tasks, "cluster_article", return_value=topic), \
+             mock.patch.object(tasks.summarize_topic_task, "apply_async") as apply:
+            for a in arts:
+                tasks.cluster_article_task(a.id)
+        self.assertEqual(apply.call_count, 1)
+
+    def test_watchlist_matches_whole_words_only_and_rate_limits(self):
+        from . import tasks
+        from .models import Watchlist
+        Watchlist.objects.create(user=self.user, query="ia")
+        DeliveryChannel.objects.create(user=self.user, channel_type="telegram", identifier="1")
+        with mock.patch("digests.services.telegram_bot.send_telegram_reply", return_value=True) as send:
+            tasks.check_article_watchlists_task(self._article("dialogue", "un dialogue").id)
+            self.assertEqual(send.call_count, 0)
+            tasks.check_article_watchlists_task(self._article("L'IA avance", "ia").id)
+            tasks.check_article_watchlists_task(self._article("Autre IA", "ia").id)
+            self.assertEqual(send.call_count, 1)

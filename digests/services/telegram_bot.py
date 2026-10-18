@@ -30,8 +30,16 @@ def send_telegram_reply(chat_id: str, text: str, parse_mode: str = "Markdown") -
         return False
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
         with httpx.Client(timeout=10.0) as client:
-            client.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode})
+            res = client.post(url, json=payload)
+            if res.status_code == 400 and parse_mode:
+                # Markdown invalide (ex: "_" ou "*" dans un titre) : repli en texte brut
+                payload.pop("parse_mode")
+                res = client.post(url, json=payload)
+        if res.status_code != 200:
+            logger.warning(f"Échec sendMessage Telegram ({res.status_code}): {res.text}")
+            return False
         return True
     except Exception as e:
         logger.error(f"Erreur envoi réponse Telegram: {e}")
@@ -164,6 +172,24 @@ def send_multiple_categories_prompt(chat_id: str) -> None:
     send_telegram_reply(chat_id, "\n".join(lines))
 
 
+def get_or_create_telegram_user(tg_user_id, chat_id: str, first_name: str = "Utilisateur") -> User:
+    """
+    Retrouve l'utilisateur Django lié à ce chat Telegram via son canal de diffusion,
+    sinon le crée avec un identifiant stable basé sur l'ID Telegram (jamais le pseudo,
+    qui est modifiable et réutilisable par n'importe qui).
+    """
+    channel = DeliveryChannel.objects.filter(
+        channel_type="telegram", identifier=chat_id
+    ).select_related("user").first()
+    if channel:
+        return channel.user
+
+    user, _ = User.objects.get_or_create(
+        username=f"tg_{tg_user_id}", defaults={"first_name": first_name}
+    )
+    return user
+
+
 def handle_telegram_update(update: dict) -> None:
     """
     Traite un message ou callback query reçu par le bot Telegram avec gestion d'état conversationnel.
@@ -174,10 +200,10 @@ def handle_telegram_update(update: dict) -> None:
         cb_id = str(callback_query.get("id"))
         cb_from = callback_query.get("from", {})
         cb_user_id = str(cb_from.get("id"))
-        cb_username = cb_from.get("username") or f"tg_{cb_user_id}"
         cb_data = callback_query.get("data", "")
 
-        user, _ = User.objects.get_or_create(username=cb_username)
+        cb_chat_id = str(callback_query.get("message", {}).get("chat", {}).get("id", cb_user_id))
+        user = get_or_create_telegram_user(cb_user_id, cb_chat_id, cb_from.get("first_name", "Utilisateur"))
 
         if cb_data.startswith("fb:"):
             parts = cb_data.split(":")
@@ -205,12 +231,12 @@ def handle_telegram_update(update: dict) -> None:
     chat = message.get("chat", {})
     chat_id = str(chat.get("id"))
     from_user = message.get("from", {})
-    username = from_user.get("username") or f"tg_{chat_id}"
+    tg_user_id = str(from_user.get("id") or chat_id)
     first_name = from_user.get("first_name", "Utilisateur")
     text = (message.get("text") or "").strip()
 
     # Trouver ou créer l'utilisateur Django correspondant
-    user, _ = User.objects.get_or_create(username=username, defaults={"first_name": first_name})
+    user = get_or_create_telegram_user(tg_user_id, chat_id, first_name)
 
     # Enregistrer ou activer le canal Telegram
     channel, _ = DeliveryChannel.objects.get_or_create(

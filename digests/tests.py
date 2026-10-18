@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from django.contrib.auth.models import User
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from .models import Source, Article, Topic, UserPreference, DeliveryChannel, Digest, DigestDelivery
 
 
@@ -64,6 +64,7 @@ class ModelsTestCase(TestCase):
         self.assertEqual(delivery.status, "pending")
         self.assertEqual(delivery.channel.channel_type, "telegram")
 
+    @override_settings(GEMINI_API_KEY=None)
     def test_synthesizer_fallback_and_script(self):
         from .services.synthesizer import summarize_topic, generate_digest_script
 
@@ -133,13 +134,14 @@ class ModelsTestCase(TestCase):
 
         # Vérifier que l'utilisateur et le canal ont été créés
         from django.contrib.auth.models import User
-        user = User.objects.get(username="alex_tech")
+        user = User.objects.get(username="tg_888777666")
         self.assertEqual(user.first_name, "Alex")
 
         channel = DeliveryChannel.objects.get(user=user, channel_type="telegram")
         self.assertEqual(channel.identifier, "888777666")
         self.assertTrue(channel.is_active)
 
+    @override_settings(TELEGRAM_BOT_TOKEN=None)
     def test_delivery_dispatcher_fallback(self):
         from .services.delivery import dispatch_digest_to_channels
 
@@ -172,7 +174,7 @@ class ModelsTestCase(TestCase):
                 "text": "/start",
             }
         })
-        user = User.objects.get(username="test_curator")
+        user = User.objects.get(username="tg_112233")
         self.assertEqual(user.preference.conversation_state, "awaiting_scope_choice")
 
         # Étape 2 : L'utilisateur choisit 1 (Un seul domaine)
@@ -248,7 +250,7 @@ class ModelsTestCase(TestCase):
                 "text": "/heure 08:45",
             }
         })
-        user = User.objects.get(username="timer_user")
+        user = User.objects.get(username="tg_445566")
         self.assertEqual(user.preference.digest_hour, time(8, 45))
 
         # /fuseau directe
@@ -378,7 +380,7 @@ class ModelsTestCase(TestCase):
                 "text": "/ask",
             }
         })
-        user = User.objects.get(username="chat_user")
+        user = User.objects.get(username="tg_778899")
         self.assertEqual(user.preference.conversation_state, "awaiting_news_question")
 
         # 3. Réponse libre dans l'état awaiting_news_question
@@ -422,8 +424,7 @@ class ModelsTestCase(TestCase):
             channel_type="telegram",
             identifier="999888",
         )
-        self.user.preference.receive_breaking_alerts = True
-        self.user.preference.save()
+        UserPreference.objects.create(user=self.user, receive_breaking_alerts=True)
 
         with patch("digests.services.telegram_bot.send_telegram_reply", return_value=True) as mock_send:
             res = dispatch_breaking_news_alert_task(topic.id)
@@ -448,7 +449,7 @@ class ModelsTestCase(TestCase):
                 "text": "/alertes off",
             }
         })
-        user = User.objects.get(username="alert_tester")
+        user = User.objects.get(username="tg_554433")
         self.assertFalse(user.preference.receive_breaking_alerts)
 
         # Réactiver
@@ -489,6 +490,7 @@ class ModelsTestCase(TestCase):
         from .services.telegram_bot import handle_telegram_update
 
         digest = Digest.objects.create(user=self.user, date=date(2026, 9, 14))
+        DeliveryChannel.objects.create(user=self.user, channel_type="telegram", identifier="11223344")
 
         # Callback query 👍
         handle_telegram_update({
@@ -518,6 +520,7 @@ class ModelsTestCase(TestCase):
         from unittest.mock import patch
 
         factory = RequestFactory()
+        staff = User.objects.create_user(username="staff_views", is_staff=True)
         digest = Digest.objects.create(
             user=self.user,
             date=date(2026, 9, 15),
@@ -527,18 +530,21 @@ class ModelsTestCase(TestCase):
 
         # 1. Dashboard view
         req = factory.get("/")
+        req.user = staff
         res = dashboard(req)
         self.assertEqual(res.status_code, 200)
         self.assertIn(b"Tableau de Bord Synapse", res.content)
 
         # 2. Archive list view
         req2 = factory.get("/archives/")
+        req2.user = staff
         res2 = archive_list(req2)
         self.assertEqual(res2.status_code, 200)
         self.assertIn(b"Archives des Briefings", res2.content)
 
         # 3. Digest detail view
         req3 = factory.get(f"/digest/{digest.id}/")
+        req3.user = staff
         res3 = digest_detail(req3, digest_id=digest.id)
         self.assertEqual(res3.status_code, 200)
         self.assertIn(b"Revue de presse", res3.content)
@@ -547,6 +553,7 @@ class ModelsTestCase(TestCase):
         with patch("digests.views.fetch_all_sources.delay") as mock_fetch, \
              patch("digests.views.dispatch_daily_digests.delay") as mock_dispatch:
             req4 = factory.post("/generate/")
+            req4.user = staff
             from django.contrib.messages.storage.fallback import FallbackStorage
             setattr(req4, "session", {})
             setattr(req4, "_messages", FallbackStorage(req4))

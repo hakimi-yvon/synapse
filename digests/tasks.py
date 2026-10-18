@@ -1,11 +1,16 @@
+import logging
+import re
 from datetime import datetime, timezone
 from celery import shared_task
+from django.core.cache import cache
 from django.db import IntegrityError
 from .models import Source, Article, Topic, Digest, UserPreference
 from .embeddings import generate_embedding
 from .clustering import cluster_article
 from .services.synthesizer import summarize_topic, generate_digest_script
 from .ingestors import get_ingestor
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task
@@ -81,12 +86,9 @@ def check_article_watchlists_task(article_id: int):
     Vérifie si un nouvel article correspond aux requêtes surveillées
     par des utilisateurs dans leur Watchlist et leur envoie une alerte ciblée.
     """
-    import logging
-    from datetime import datetime, timezone
     from .models import Article, Watchlist, DeliveryChannel
     from .services.telegram_bot import send_telegram_reply
 
-    logger = logging.getLogger(__name__)
     try:
         article = Article.objects.select_related("source").get(id=article_id)
     except Article.DoesNotExist:
@@ -105,27 +107,33 @@ def check_article_watchlists_task(article_id: int):
         if not q:
             continue
 
-        if q in title_lower or q in content_lower:
-            channel = DeliveryChannel.objects.filter(
-                user=wl.user,
-                channel_type="telegram",
-                is_active=True
-            ).first()
+        pattern = re.compile(rf"(?<!\w){re.escape(q)}(?!\w)")
+        if not (pattern.search(title_lower) or pattern.search(content_lower)):
+            continue
 
-            if channel:
-                source_name = article.source.name if article.source else "Actualité"
-                msg = (
-                    f"🎯 *Alerte Watchlist : Suivi « {wl.query} »*\n\n"
-                    f"Un nouvel article pertinent vient d'être détecté :\n"
-                    f"📰 *{article.title}*\n\n"
-                    f"🏢 *Source :* {source_name}\n"
-                    f"🔗 [Consulter l'article original]({article.url})"
-                )
-                if send_telegram_reply(channel.identifier, msg):
-                    wl.matches_count += 1
-                    wl.last_notified_at = datetime.now(timezone.utc)
-                    wl.save(update_fields=["matches_count", "last_notified_at"])
-                    notified_count += 1
+        if wl.last_notified_at and (datetime.now(timezone.utc) - wl.last_notified_at).total_seconds() < 900:
+            continue
+
+        channel = DeliveryChannel.objects.filter(
+            user=wl.user,
+            channel_type="telegram",
+            is_active=True
+        ).first()
+
+        if channel:
+            source_name = article.source.name if article.source else "Actualité"
+            msg = (
+                f"🎯 *Alerte Watchlist : Suivi « {wl.query} »*\n\n"
+                f"Un nouvel article pertinent vient d'être détecté :\n"
+                f"📰 *{article.title}*\n\n"
+                f"🏢 *Source :* {source_name}\n"
+                f"🔗 [Consulter l'article original]({article.url})"
+            )
+            if send_telegram_reply(channel.identifier, msg):
+                wl.matches_count += 1
+                wl.last_notified_at = datetime.now(timezone.utc)
+                wl.save(update_fields=["matches_count", "last_notified_at"])
+                notified_count += 1
 
     return f"{notified_count} alerte(s) watchlist envoyée(s) pour article {article_id}"
 
@@ -138,13 +146,15 @@ def cluster_article_task(article_id):
         return f"Article {article_id} introuvable"
 
     topic = cluster_article(article)
-    # Déclencher la synthèse LLM du topic mis à jour
-    summarize_topic_task.delay(topic.id)
+    # Synthèse LLM du topic : au plus une toutes les ~2 min, quel que soit le nombre d'articles ajoutés
+    if cache.add(f"summarize_pending:{topic.id}", 1, timeout=600):
+        summarize_topic_task.apply_async((topic.id,), countdown=120)
     return f"Article '{article.title[:30]}' assigné au topic '{topic.title[:30]}'"
 
 
 @shared_task
 def summarize_topic_task(topic_id):
+    cache.delete(f"summarize_pending:{topic_id}")
     try:
         topic = Topic.objects.get(id=topic_id)
     except Topic.DoesNotExist:
@@ -166,25 +176,21 @@ def dispatch_breaking_news_alert_task(topic_id):
     Diffuse une alerte Breaking News en temps réel aux utilisateurs éligibles
     ayant activé les alertes et suivant la catégorie concernée.
     """
-    import logging
     from django.utils import timezone
     from .models import Topic, UserPreference
     from .services.telegram_bot import send_telegram_reply
     from .services.delivery.whatsapp import send_whatsapp_message
 
-    logger = logging.getLogger(__name__)
 
     try:
         topic = Topic.objects.get(id=topic_id)
     except Topic.DoesNotExist:
         return f"Topic {topic_id} introuvable"
 
-    if topic.alert_sent_at is not None:
+    # Verrouillage atomique pour éviter les doublons d'envoi
+    claimed = Topic.objects.filter(id=topic_id, alert_sent_at__isnull=True).update(alert_sent_at=timezone.now())
+    if not claimed:
         return f"Alerte déjà envoyée pour le topic {topic_id}"
-
-    # Verrouillage pour éviter les doublons d'envoi
-    topic.alert_sent_at = timezone.now()
-    topic.save(update_fields=["alert_sent_at"])
 
     bullets = "\n".join(f"• {b}" for b in topic.summary_bullets[:3]) if topic.summary_bullets else ""
     alert_text = (
@@ -424,12 +430,10 @@ def answer_news_question_task(user_id: int, chat_id: str, question: str):
     Exécute la recherche vectorielle et la génération IA pour répondre
     à une question d'actualité posée par l'utilisateur sur Telegram.
     """
-    import logging
     from django.contrib.auth.models import User
     from .services.news_chat import answer_news_question
     from .services.telegram_bot import send_telegram_reply
 
-    logger = logging.getLogger(__name__)
 
     try:
         user = User.objects.get(id=user_id)
@@ -459,7 +463,6 @@ def process_voice_question_task(user_id: int, chat_id: str, voice_file_path: str
     3. Vocalise la réponse textuelle avec une voix de studio neuronale (TTS).
     4. Répond sur Telegram avec la note vocale audio (sendVoice) et la réponse textuelle détaillée.
     """
-    import logging
     import os
     from pathlib import Path
     from django.contrib.auth.models import User
@@ -470,7 +473,6 @@ def process_voice_question_task(user_id: int, chat_id: str, voice_file_path: str
     from .services.telegram_bot import send_telegram_reply, send_telegram_voice
     from .services.tts import synthesize_text_to_file, clean_script_for_tts, VOICE_HENRI
 
-    logger = logging.getLogger(__name__)
 
     try:
         user = User.objects.get(id=user_id)
